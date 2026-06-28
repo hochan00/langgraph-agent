@@ -1,0 +1,19 @@
+from dotenv import load_dotenv
+
+load_dotenv()
+
+import logging
+
+from fastapi import FastAPI
+
+from api.router import router
+
+logging.basicConfig(level=logging.INFO)
+
+app = FastAPI(title="mygpt", version="0.1.0")
+app.include_router(router, prefix="/api")
+
+
+@app.get("/")
+def health_check():
+    return {"status": "online", "message": "mygpt server is running"}
