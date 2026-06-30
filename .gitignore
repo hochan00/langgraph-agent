@@ -226,3 +226,26 @@ pyrightconfig.json
 .ionide
 
 # End of https://www.toptal.com/developers/gitignore/api/python,macos,visualstudiocode
+
+# 데이터셋
+data/*
+!data/raw/
+data/raw/*
+!data/raw/.gitkeep
+
+# 토크나이저 산출물
+tokenizer/vocab.txt
+tokenizer/*.model
+tokenizer/*.vocab
+
+# 모델 체크포인트
+*.pt
+*.pth
+*.ckpt
+checkpoints/
+
+# 벡터 DB
+data/chroma_db/
+
+# 로그
+wandb/
