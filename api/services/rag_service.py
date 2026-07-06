@@ -19,12 +19,10 @@ text_splitter = RecursiveCharacterTextSplitter(
 )
 
 rag_yaml = load_prompt("api/prompts/rag.yaml", encoding="utf-8")
-RAG_PROMPT = ChatPromptTemplate.from_messages(
-    [("human", rag_yaml.template)]
-)
+RAG_PROMPT = ChatPromptTemplate.from_messages([("human", rag_yaml.template)])
 
 
-def _get_vectorstore() -> Chroma:
+def get_vectorstore() -> Chroma:
     return Chroma(
         persist_directory=settings.CHROMA_PERSIST_DIR,
         embedding_function=embeddings,
@@ -52,9 +50,7 @@ async def add_documents(text: str, source: str) -> int:
 
 async def query_rag(question: str) -> dict[str, Any]:
     llm = get_llm()
-    retriever = _get_vectorstore().as_retriever(
-        search_kwargs={"k": settings.RAG_TOP_K}
-    )
+    retriever = get_vectorstore().as_retriever(search_kwargs={"k": settings.RAG_TOP_K})
 
     chain = (
         {"context": retriever | format_docs, "question": RunnablePassthrough()}
