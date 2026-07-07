@@ -10,10 +10,10 @@ from api.router import router
 
 logging.basicConfig(level=logging.INFO)
 
-app = FastAPI(title="mygpt", version="0.1.0")
+app = FastAPI(title="langgraph-agent", version="0.1.0")
 app.include_router(router, prefix="/api")
 
 
 @app.get("/")
 def health_check():
-    return {"status": "online", "message": "mygpt server is running"}
+    return {"status": "online", "message": "langgraph-agent server is running"}
