@@ -1,14 +1,15 @@
 from langchain_core.output_parsers import StrOutputParser
 
-from api.core.config import settings
 from api.core.llm import get_llm
 from api.graph.state import GraphState
-from api.services.rag_service import RAG_PROMPT, format_docs, get_vectorstore
+from api.services.document_store import get_retriever
+from api.services.prompts import RAG_PROMPT
+from api.services.utils import format_docs
 
 
 def retrieve(state: GraphState) -> dict:
     question = state["question"]
-    retriever = get_vectorstore().as_retriever(search_kwargs={"k": settings.RAG_TOP_K})
+    retriever = get_retriever()
     documents = retriever.invoke(question)
     return {"documents": documents}
 

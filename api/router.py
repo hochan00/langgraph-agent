@@ -5,7 +5,7 @@ from api.schema import (
     RAGRequest,
     RAGResponse,
 )
-from api.services import rag_service
+from api.services import document_store, rag_service, utils
 
 router = APIRouter()
 
@@ -15,7 +15,7 @@ async def add_documents(file: UploadFile = File(...)):
     """RAG 문서 등록"""
     content = await file.read()
     text = content.decode("utf-8")
-    chunk_count = await rag_service.add_documents(text=text, source=file.filename)
+    chunk_count = await document_store.add_documents(text=text, source=file.filename)
     return {
         "message": f"'{file.filename}' 문서가 등록되었습니다.",
         "chunks": chunk_count,
@@ -37,7 +37,7 @@ def query_rag_graph(req: RAGRequest):
 
     code_examples = []
     for doc in result["documents"]:
-        code_examples.extend(rag_service.extract_code_blocks(doc.page_content))
+        code_examples.extend(utils.extract_code_blocks(doc.page_content))
 
     return RAGResponse(
         question=req.question,
