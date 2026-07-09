@@ -17,9 +17,7 @@ def grade_hallucination(state: GraphState) -> dict:
 
     structured_llm = get_llm().with_structured_output(HallucinationGrade)
     chain = GRADE_HALLUCINATION_PROMPT | structured_llm
-    result = chain.invoke(
-        {"documents": format_docs(documents), "generation": generation}
-    )
+    result = chain.invoke({"context": format_docs(documents), "generation": generation})
 
     return {"retry_count": retry_count + 1, "grounded": result.grounded}
 
