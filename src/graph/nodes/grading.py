@@ -13,18 +13,21 @@ class HallucinationGrade(BaseModel):
 def grade_hallucination(state: GraphState) -> dict:
     documents = state["documents"]
     generation = state["generation"]
-    retry_count = state.get("retry_count", 0)
+    hallucination_retry_count = state.get("hallucination_retry_count", 0)
 
     structured_llm = get_llm().with_structured_output(HallucinationGrade)
     chain = GRADE_HALLUCINATION_PROMPT | structured_llm
     result = chain.invoke({"context": format_docs(documents), "generation": generation})
 
-    return {"retry_count": retry_count + 1, "grounded": result.grounded}
+    return {
+        "hallucination_retry_count": hallucination_retry_count + 1,
+        "grounded": result.grounded,
+    }
 
 
 def route_hallucination_result(state: GraphState) -> str:
     if state.get("grounded", False):
         return "end"
-    if state.get("retry_count", 0) >= 2:
+    if state.get("hallucination_retry_count", 0) >= 2:
         return "hallucination"
     return "retry"
