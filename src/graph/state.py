@@ -8,3 +8,4 @@ class GraphState(TypedDict):
     documents: list[Document]
     generation: str
     retry_count: int
+    grounded: bool

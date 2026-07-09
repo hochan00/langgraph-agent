@@ -22,9 +22,9 @@ def grade_hallucination(state: GraphState) -> dict:
     return {"retry_count": retry_count + 1, "grounded": result.grounded}
 
 
-def route_after_hallucination_check(state: GraphState) -> str:
+def route_hallucination_result(state: GraphState) -> str:
     if state.get("grounded", False):
         return "end"
     if state.get("retry_count", 0) >= 2:
-        return "end"
+        return "hallucination"
     return "retry"

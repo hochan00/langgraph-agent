@@ -14,3 +14,7 @@ def generate(state: GraphState) -> dict:
     chain = RAG_PROMPT | llm | StrOutputParser()
     generation = chain.invoke({"context": format_docs(documents), "question": question})
     return {"generation": generation}
+
+
+def refuse_answer(state: GraphState) -> dict:
+    return {"generation": "문서 근거가 부족하여 답변할 수 없습니다."}
