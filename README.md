@@ -84,8 +84,8 @@ flowchart LR
 
 ### LangGraph 그래프 구조
 
-현재 구현된 그래프는 **1단계(`retrieve → generate`)** 이며, 앞으로 Corrective RAG 노드 8개로 확장됩니다.
-아래 다이어그램에서 실선은 구현 완료, 점선은 구현 예정입니다.
+**1~2단계(`retrieve → generate → grade_hallucination`)와 3단계 판단 노드(`grade_documents`)까지 구현 완료**,
+`transform_query`(질의 재작성)만 남았습니다. 아래 다이어그램에서 실선은 구현 완료, 점선은 구현 예정입니다.
 
 ```mermaid
 flowchart TD
@@ -94,50 +94,63 @@ flowchart TD
 
     routeQ["route_question<br/>검색이 필요한 질문인가"]:::planned
     retrieve["retrieve<br/>ChromaDB 벡터 검색"]
-    gradeDoc["grade_documents<br/>문서 관련성 평가"]:::planned
+    gradeDoc["grade_documents<br/>문서 관련성 평가"]
     transform["transform_query<br/>질의 재작성"]:::planned
     web["web_search<br/>재시도 소진 시 웹검색 폴백"]:::planned
     generate["generate<br/>Gemini 답변 생성"]
-    gradeHallu["grade_hallucination<br/>답변이 문서에 근거하는가"]:::planned
+    gradeHallu["grade_hallucination<br/>답변이 문서에 근거하는가"]
+    refuse["refuse_answer<br/>답변 거절 (재시도 소진)"]
     gradeAns["grade_answer_relevance<br/>답변이 질문에 답했는가"]:::planned
 
     routeQ -.->|관련 없음| directEnd([즉시 응답]):::planned
     routeQ -.->|관련 있음| retrieve
 
-    retrieve --> generate
-    retrieve -.->|예정| gradeDoc
+    retrieve --> gradeDoc
 
-    gradeDoc -.->|관련 있음| generate
+    gradeDoc -->|관련 있음| generate
     gradeDoc -.->|관련 없음, 첫 시도| transform
-    gradeDoc -.->|관련 없음, 재시도 소진| web
-    transform -.->|재시도 횟수 +1| retrieve
-    web -.-> generate
+    gradeDoc -->|관련 없음, 재시도 소진| refuse
+    transform -.->|search_retry_count +1| retrieve
 
-    generate --> END([END])
-    generate -.->|예정| gradeHallu
+    generate --> gradeHallu
 
-    gradeHallu -.->|근거 부족, 횟수 제한 내| generate
-    gradeHallu -.->|통과| gradeAns
+    gradeHallu -->|근거 부족, 횟수 제한 내| generate
+    gradeHallu -->|근거 부족, 재시도 소진| refuse
+    gradeHallu -->|통과| END([END])
+    refuse --> END
+
     gradeAns -.->|부적절| transform
     gradeAns -.->|통과| END
 
     classDef planned stroke-dasharray: 5 5,fill:#f5f5f5,color:#888;
 ```
 
-**핵심 설계 포인트**: `grade_documents`가 실패하면 **바로 웹검색으로 가지 않고, 먼저 질문을 재작성해서 같은 로컬
-ChromaDB를 재검색**합니다. 검색 실패의 대부분은 "문서에 내용이 없어서"가 아니라 "질의 표현이 검색에 안 맞아서"이기
-때문에, 비용이 드는 웹검색은 로컬 재검색까지 실패했을 때만 씁니다. 무한 재검색을 막기 위해 `retry_count`로 횟수를
-제한합니다.
+**핵심 설계 포인트 1 — 웹검색보다 로컬 재검색이 먼저**: `grade_documents`가 실패하면 **바로 웹검색으로 가지 않고,
+먼저 질문을 재작성해서 같은 로컬 ChromaDB를 재검색**합니다. 검색 실패의 대부분은 "문서에 내용이 없어서"가 아니라
+"질의 표현이 검색에 안 맞아서"이기 때문에, 비용이 드는 웹검색은 로컬 재검색까지 실패했을 때만 씁니다.
+
+**핵심 설계 포인트 2 — 재시도 카운터를 루프별로 분리**: `grade_documents`(문서 재검색)와 `grade_hallucination`
+(답변 재생성)은 서로 다른 시점에 도는 별개의 루프라, 재시도 횟수도 `search_retry_count` / `hallucination_retry_count`로
+**따로 관리**합니다. 하나의 카운터를 공유하면, 한쪽 루프가 이미 써버린 횟수 때문에 다른 쪽 루프가 재시도도 못 해보고
+조기 종료되는 버그가 생길 수 있습니다.
+
+**핵심 설계 포인트 3 — 실패해도 그냥 끝내지 않고 명시적으로 답변 거절**: 재시도를 다 써도 근거를 못 찾으면,
+`generation`을 조용히 그대로 반환하는 게 아니라 `refuse_answer` 노드를 거쳐 **"답변할 수 없다"는 사실을 명확히
+알리는 응답**으로 대체합니다. 이 노드를 판단 노드(`grade_documents`, `grade_hallucination`)와 분리해둔 이유는,
+나중에 `grade_answer_relevance` 등 다른 판단 노드가 실패했을 때도 **같은 노드를 재사용**하기 위해서입니다.
 
 **그래프 상태(`GraphState`)** — 노드 간에 오가는 데이터:
 
 ```python
 class GraphState(TypedDict):
-    question: str              # 원본 질문 (재작성해도 값이 안 바뀜)
-    query: str                 # 검색용 질의 (transform_query가 갱신)
-    documents: list[Document]  # retrieve가 채움
-    generation: str            # generate가 채움
-    retry_count: int           # 재검색 재시도 횟수, 무한루프 방지
+    question: str                    # 원본 질문 (재작성해도 값이 안 바뀜)
+    query: str                       # 검색용 질의 (transform_query가 갱신)
+    documents: list[Document]        # retrieve가 채움
+    generation: str                  # generate가 채움
+    grounded: bool                   # grade_hallucination의 판단 결과
+    relevant: bool                   # grade_documents의 판단 결과
+    hallucination_retry_count: int   # 답변 재생성 재시도 횟수
+    search_retry_count: int          # 문서 재검색 재시도 횟수
 ```
 
 ### RAG 데이터 흐름
@@ -206,7 +219,10 @@ langgraph-agent/
 │   │
 │   ├── graph/                   # LangGraph "조립/실행"만 담당
 │   │   ├── state.py             #   GraphState (TypedDict)
-│   │   ├── nodes.py             #   노드 함수 (retrieve, generate, ...)
+│   │   ├── nodes/               #   노드 함수 (관심사별로 분리)
+│   │   │   ├── retrieval.py     #     retrieve
+│   │   │   ├── generation.py    #     generate, refuse_answer
+│   │   │   └── grading.py       #     grade_hallucination, grade_documents, 라우팅 함수
 │   │   └── graph.py             #   StateGraph 조립 + compile
 │   │
 │   ├── services/                # 재사용 가능한 "부품"
@@ -377,9 +393,10 @@ FastAPI 원본 마크다운은 실제 파이썬 코드를 `{* ../../docs_src/...
 ## 로드맵
 
 - [x] `retrieve → generate` 그래프 (1단계)
-- [ ] `grade_hallucination` — 답변 근거 여부 체크, 실패 시 재생성 (2단계)
-- [ ] `grade_documents` + `transform_query` — 문서 관련성 평가, 실패 시 질의 재작성 후 로컬 재검색 (3단계)
-- [ ] `route_question` · `web_search` · `grade_answer` — 질문 라우팅, 웹검색 폴백, 답변 적절성 평가 (4단계)
+- [x] `grade_hallucination` — 답변 근거 여부 체크, 실패 시 재생성 (2단계)
+- [x] `grade_documents` — 문서 관련성 평가 (3단계, 판단 노드까지 완료)
+- [ ] `transform_query` — 관련 없으면 질의 재작성 후 로컬 재검색 (3단계, 진행 중)
+- [ ] `route_question` · `web_search` · `grade_answer_relevance` — 질문 라우팅, 웹검색 폴백, 답변 적절성 평가 (4단계)
 - [ ] `{* *}` include 매크로 해석 전처리 노드 (실제 코드 예제 적재)
 - [ ] RAGAS / LangSmith Dataset 기반 baseline 대비 성능 평가
 - [ ] baseline(`rag_router` · `rag_service` · `rag_schema`) 제거
