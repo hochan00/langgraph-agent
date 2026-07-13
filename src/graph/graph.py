@@ -7,7 +7,7 @@ from src.graph.nodes.grading import (
     route_documents_result,
     route_hallucination_result,
 )
-from src.graph.nodes.retrieval import retrieve
+from src.graph.nodes.retrieval import retrieve, transform_query
 from src.graph.state import GraphState
 
 graph_builder = StateGraph(GraphState)
@@ -17,8 +17,10 @@ graph_builder.add_node("generate", generate)
 graph_builder.add_node("grade_hallucination", grade_hallucination)
 graph_builder.add_node("refuse_answer", refuse_answer)
 graph_builder.add_node("grade_documents", grade_documents)
+graph_builder.add_node("transform_query", transform_query)
 
 graph_builder.add_edge(START, "retrieve")
+graph_builder.add_edge("transform_query", "retrieve")
 graph_builder.add_edge("retrieve", "grade_documents")
 graph_builder.add_edge("generate", "grade_hallucination")
 graph_builder.add_edge("refuse_answer", END)
