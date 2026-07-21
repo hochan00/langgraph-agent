@@ -18,5 +18,5 @@ def agent_graph(req: AgentRequest):
     )
 
     return AgentResponse(
-        message=result["message"][-1].content,
+        message=result["messages"][-1].content,
     )
