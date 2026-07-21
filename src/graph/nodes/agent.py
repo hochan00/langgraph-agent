@@ -9,3 +9,9 @@ def agent(state: AgentState) -> dict:
     llm_with_tools = get_llm().bind_tools(tools)
     response = llm_with_tools.invoke(state["messages"])
     return {"messages": [response]}
+
+
+def route_agent_result(state: AgentState) -> str:
+    if state["messages"][-1].tool_calls:
+        return "continue"
+    return "end"
