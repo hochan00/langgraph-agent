@@ -14,6 +14,7 @@ dependencies = [
     "langchain-text-splitters>=1.1.2",
     "langgraph>=1.2.6",
     "langsmith>=0.9.1",
+    "notion-client>=3.1.0",
     "pydantic-settings>=2.14.2",
     "python-dotenv>=1.2.2",
     "python-multipart>=0.0.32",
