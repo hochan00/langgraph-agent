@@ -1,0 +1,31 @@
+# 가상환경 — 호스트 전용(절대경로가 박혀 있어 컨테이너에서 못 씀). 컨테이너는 uv sync로 새로 만듦
+.venv
+
+# 비밀키 — 이미지에 굽지 않고 런타임에 주입(compose의 env_file)
+.env
+
+# 영속 데이터 — 볼륨으로 관리하므로 이미지에 넣지 않음
+data/
+
+# git 관련
+.git
+.gitignore
+
+# 파이썬 캐시
+__pycache__/
+*.pyc
+*.pyo
+
+# 확인/테스트용 스크립트
+check_notion.py
+test.py
+
+# 에디터/OS
+.vscode
+.idea
+.DS_Store
+
+# 도커 파일 자신(이미지 안에 넣을 필요 없음)
+Dockerfile
+.dockerignore
+docker-compose.yml
