@@ -10,14 +10,9 @@ class Settings(BaseSettings):
     GEMINI_MODEL: str = "gemini-2.5-flash"
     GEMINI_TEMPERATURE: float = 0.3
 
-    EMBEDDING_MODEL: str = "Qwen/Qwen3-Embedding-0.6B"
-
-    RAG_TOP_K: int = 5
-    RAG_CHUNK_SIZE: int = 1000
-    RAG_CHUNK_OVERLAP: int = 100
-    CHROMA_PERSIST_DIR: str = "data/chroma_db"
-
     NOTION_API_KEY: str = ""
+    NOTION_RETRO_DB_ID: str = ""
+    GITHUB_TOKEN: str = ""
 
     class Config:
         env_file = ".env"

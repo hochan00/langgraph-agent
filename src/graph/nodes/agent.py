@@ -1,8 +1,7 @@
 from src.core.llm import get_llm
 from src.graph.state import AgentState
-from src.tools.get_current_time import get_current_time
 
-tools = [get_current_time]
+tools = []
 
 
 def agent(state: AgentState) -> dict:
