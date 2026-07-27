@@ -1,0 +1,53 @@
+# 워크플로의 이름
+name: Deploy
+
+# 언제 실행할지 — main 브랜치에 push(merge 포함)될 때마다 자동 실행
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest   # GitHub이 제공하는 임시 빌드 서버 (amd64)
+    steps:
+      # 1. 저장소 코드를 이 빌드 서버로 가져옴
+      - name: 코드 체크아웃
+        uses: actions/checkout@v4
+
+      # 2. 빌드 서버는 amd64인데 EC2(t4g)는 arm64라 크로스 빌드가 필요함 — 이를 위한 에뮬레이션 설정
+      - name: ARM64 빌드를 위한 QEMU 설정
+        uses: docker/setup-qemu-action@v3
+
+      # 3. 멀티 아키텍처 이미지를 빌드할 수 있는 도구(buildx) 준비
+      - name: Buildx 설정
+        uses: docker/setup-buildx-action@v3
+
+      # 4. 도커 허브에 로그인 (비밀값은 GitHub Secrets에서 가져옴, 코드에 노출 안 됨)
+      - name: 도커 허브 로그인
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # 5. Dockerfile로 이미지를 arm64용으로 빌드하고, 도커 허브에 push
+      #    platforms: linux/arm64 — EC2(t4g) 아키텍처와 맞춤
+      - name: 이미지 빌드 및 푸시 (arm64, EC2 t4g와 아키텍처 일치)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/arm64
+          push: true
+          tags: hochan00/agent-project:latest
+
+      # 6. SSH로 EC2에 접속해서, 방금 push한 최신 이미지를 받아(pull) 컨테이너를 재기동
+      #    EC2의 agent-project 폴더에 있는 docker-compose.yml을 그대로 사용
+      - name: EC2 접속해서 새 이미지로 재기동
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ubuntu
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          script: |
+            cd agent-project
+            docker compose pull
+            docker compose up -d
