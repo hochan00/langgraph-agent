@@ -63,29 +63,29 @@
 
 ```mermaid
 flowchart TD
-    START([버튼 클릭 - repo, date]) --> a1
+    START([버튼 클릭 - repo, date]) --> a_agent
 
-    subgraph analyst[commit_analyst]
+    subgraph analyst["commit_analyst — 내부 ReAct 루프"]
         direction TB
-        a1["fetch_commits(repo, date)"]
-        a2{diff까지 볼 가치 있나?}
-        a3["fetch_diff(sha)"]
-        a4[CommitAnalysis]
-        a1 --> a2
-        a2 -->|의미 있는 변경| a3 --> a4
-        a2 -.->|사소한 커밋| a4
+        a_agent["agent<br/>fetch_commits · fetch_diff 중<br/>스스로 선택"]
+        a_tools["tools<br/>선택된 도구 실행"]
+        a4["구조화 출력<br/>CommitAnalysis"]
+        a_agent -->|도구 호출 있음| a_tools --> a_agent
+        a_agent -->|충분히 판단함 - 도구 호출 없음| a4
     end
 
     a4 -->|has_activity: false| END1([종료 - 활동 없음])
-    a4 -->|has_activity: true| w1
+    a4 -->|has_activity: true| w_agent
 
     subgraph writer[report_writer]
         direction TB
-        w1["fetch_readme(repo)<br/>배경 맥락 참고용"]
+        w_agent["agent<br/>fetch_readme 필요시 호출"]
+        w_tools["tools<br/>fetch_readme 실행"]
         w2[초안 생성]
         w3{근거검증 통과?}
         w4[RetroDraft]
-        w1 --> w2 --> w3
+        w_agent -->|도구 호출 있음| w_tools --> w_agent
+        w_agent -->|충분함 - 도구 호출 없음| w2 --> w3
         w3 -->|실패 - 최대 2회| w2
         w3 -->|통과| w4
     end
@@ -103,11 +103,28 @@ flowchart TD
     n2 -.->|거절 + 수정요청 - 이전 안과 diff 표시| w2
 ```
 
-**핵심 설계 포인트 1 — 판단이 필요한 지점에만 자율성을 준다**: `commit_analyst`는 각 커밋을 보고
-"diff까지 볼 가치가 있는가"를 스스로 판단합니다(사소한 커밋은 메시지만, 의미 있는 변경은 diff 조회).
-반면 전체 실행 순서(분석 → 작성 → 저장)는 고정입니다. 모든 지점에 자율성을 주면 실행이 불안정해지고,
-전혀 안 주면 그냥 고정 파이프라인이 되어 "에이전트"라 부르기 어려워집니다 — 이 프로젝트는 그 경계를
-**"diff를 볼지 말지"라는 바운더리 있는 판단 하나**로 정했습니다.
+**핵심 설계 포인트 1 — 자율성은 "에이전트 내부"에만 두고, 에이전트 "사이" 순서는 고정한다**: 처음엔
+"diff까지 볼 가치 있나"를 그래프의 조건부 엣지 하나로 표현했지만, 그러면 판단이 매 커밋마다 반복되지
+못하고 전체에 대해 한 번만 갈리는 형식적 분기가 됩니다. 그래서 `commit_analyst` 자체를
+`fetch_commits`·`fetch_diff`를 `bind_tools`한 **자기만의 `agent ⇄ tools` 루프(ReAct)**로 만들어,
+커밋별로 "이건 메시지만, 이건 diff까지" 를 필요한 만큼 반복 판단하게 합니다. `report_writer`도
+`fetch_readme` 호출 여부를 같은 방식의 루프로 스스로 정합니다. 반면 **에이전트 사이의 순서**
+(분석 → 작성 → 저장)는 고정된 그래프 엣지입니다 — 이 순서까지 LLM이 매번 판단하게 하면(완전 동적
+멀티에이전트) 실행이 불안정해지고, 반대로 각 에이전트 내부까지 고정 로직이면 "에이전트"라 부르기
+어려워집니다. 자율성의 경계를 **"에이전트 내부의 tool-calling 루프"** 로 긋고, 그 바깥(오케스트레이션)은
+설계자가 고정한다는 원칙입니다.
+
+**핵심 설계 포인트 1-1 — ReAct 루프와 도구 실행의 결과는 구조화 출력으로 변환한다**: 일반적인 ReAct
+루프는 도구 호출이 끝나면 자유 텍스트로 답하고 종료하지만, 여기서는 다음 에이전트가 정해진 필드
+(`CommitAnalysis`, `RetroDraft`)를 그대로 이어받아야 합니다. 그래서 루프가 종료된 시점(마지막 메시지에
+도구 호출이 없음)에 구조화 출력(`with_structured_output`) 호출을 한 번 더 거쳐 Pydantic 모델로
+정리하는 단계를 각 에이전트 말미에 둡니다.
+
+**핵심 설계 포인트 1-2 — 근거검증(grounding check)은 도구 루프가 아니라 명시적 그래프 엣지로 남긴다**:
+`report_writer`의 "초안 생성 → 근거검증 → 실패 시 재생성"은 ReAct로 흡수하지 않았습니다. ReAct는
+"외부에서 무엇을 더 관찰할지"를 위한 패턴이고, 근거검증은 "이미 만든 결과물을 스스로 채점"하는 별개의
+관심사이기 때문입니다 — 이전 CRAG의 `grade_hallucination` 패턴을 그대로 재사용해 명시적 리트라이
+엣지로 표현합니다.
 
 **핵심 설계 포인트 2 — 생성과 저장을 분리한다**: `report_writer`는 노션 API를 전혀 모르고, 텍스트만
 만듭니다. `notion_writer`는 반대로 텍스트를 수정하는 능력이 없고, 저장 여부만 판단합니다. 수정
@@ -120,9 +137,10 @@ flowchart TD
 
 ### 에이전트별 역할·입출력
 
-**`commit_analyst`**
-- 도구: `fetch_commits(repo, date)`, `fetch_diff(commit_sha)`
-- 출력:
+**`commit_analyst`** — 내부 `agent ⇄ tools` 루프 (ReAct)
+- 도구: `fetch_commits(repo, date)`, `fetch_diff(commit_sha)` — 둘 다 `bind_tools`로 LLM에 위임,
+  어떤 커밋의 diff까지 볼지·몇 번 호출할지는 에이전트가 스스로 반복 판단
+- 루프 종료(도구 호출 없음) 후 구조화 출력으로 변환:
   ```python
   class CommitAnalysis(BaseModel):
       has_activity: bool       # 오늘 커밋이 있었는지 (분기 기준)
@@ -131,10 +149,11 @@ flowchart TD
       key_changes: list[str]    # 주요 변경사항 목록
   ```
 
-**`report_writer`**
-- 도구: `fetch_readme(repo)` (배경 맥락 참고용 — 예측이 아닌 서술 보조)
+**`report_writer`** — 정보 수집은 ReAct 루프, 근거검증은 명시적 리트라이 엣지
+- 도구: `fetch_readme(repo)` (배경 맥락 참고용 — 필요하다고 판단할 때만 호출)
 - 입력: `CommitAnalysis`
-- 내부: 초안 생성 → `key_changes`에 실제로 근거하는지 검증 → 실패 시 최대 2회 재생성
+- 내부: (루프) 필요시 `fetch_readme` 호출 → 초안 생성 → `key_changes`에 실제로 근거하는지 검증
+  → 실패 시 최대 2회 재생성(그래프 엣지, 도구 루프 아님)
 - 출력:
   ```python
   class RetroDraft(BaseModel):
@@ -215,11 +234,11 @@ dev-retro-agent/
 │   ├── graph/
 │   │   ├── state.py              # RetroState (repo, date, commit_analysis, retro_draft, write_result)
 │   │   ├── nodes/
-│   │   │   ├── commit_analyst.py
-│   │   │   ├── report_writer.py
+│   │   │   ├── commit_analyst.py  # 내부에 agent⇄tools ReAct 서브그래프 포함
+│   │   │   ├── report_writer.py   # fetch_readme만 ReAct, 근거검증은 명시적 엣지
 │   │   │   ├── notion_writer.py
 │   │   │   └── confirm.py        # interrupt 기반 HITL
-│   │   └── graph.py
+│   │   └── graph.py               # 세 서브그래프를 고정 순서로 조립하는 최상위 그래프
 │   │
 │   ├── tools/
 │   │   ├── fetch_commits.py
@@ -276,8 +295,23 @@ uv run uvicorn src.main:app --reload
 고려했습니다. 하지만 이 구조는 내부가 고정 순서 파이프라인이라 "정교한 워크플로우"이지 "멀티
 에이전트"라 부르기 어려웠습니다. 그래서 각자 독립된 도구 접근과 판단 범위를 가진 `commit_analyst` /
 `report_writer` / `notion_writer` 세 에이전트로 재설계했습니다. 다만 전체 무제한 자율성(에이전트가
-전체 실행 순서까지 매번 판단)은 스코프 규율(완성도 우선)과 충돌하므로, "diff를 볼지 말지"처럼
-바운더리 있는 판단 하나에만 자율성을 부여했습니다.
+전체 실행 순서까지 매번 판단)은 스코프 규율(완성도 우선)과 충돌하므로, 에이전트 **사이**의 순서는
+고정하고 자율성은 각 에이전트 **내부**로만 한정했습니다.
+</details>
+
+<details>
+<summary><b>왜 "diff를 볼지 말지"를 조건부 엣지가 아니라 에이전트 내부 ReAct 루프로 두는가</b></summary>
+
+처음 설계에서는 이 판단이 그래프의 조건부 엣지 하나였습니다. 그런데 이러면 커밋이 여러 개일 때도
+전체에 대해 한 번만 갈리는 형식적 분기가 되어, "각 커밋을 보고 판단한다"는 의도와 맞지 않았습니다.
+그래서 `commit_analyst`를 `fetch_commits`·`fetch_diff`에 `bind_tools`한 자기만의 `agent ⇄ tools`
+루프(ReAct)로 바꿔, 커밋별로 필요한 만큼 반복 판단하게 했습니다. 같은 이유로 `report_writer`의
+`fetch_readme` 호출도 고정 호출이 아니라 루프 안에서 필요하다고 판단할 때만 호출합니다. 다만 판단
+성격이 다른 "근거검증 재생성"(이미 만든 결과물을 스스로 채점)까지 이 루프에 욱여넣지는 않았습니다 —
+ReAct는 "외부에서 무엇을 더 관찰할지"를 위한 패턴이라, 자기 채점은 기존 CRAG의 명시적 리트라이
+엣지(`grade_hallucination` 패턴)로 남겨뒀습니다. 각 에이전트는 다음 노드에 고정 스키마
+(`CommitAnalysis`, `RetroDraft`)를 넘겨야 하므로, 루프 종료 후 구조화 출력(`with_structured_output`)
+으로 정리하는 단계가 추가로 필요합니다.
 </details>
 
 <details>
