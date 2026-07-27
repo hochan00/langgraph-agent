@@ -1,7 +1,7 @@
-# notion-assistant
+# dev-retro-agent
 
-> LangGraph 기반 **Notion 개인 비서 에이전트** — 내 노션에서 정보를 찾아 종합해 답하고,
-> 새 내용을 적절한 위치에 작성하고, 자연어로 일정을 등록해주는 tool-calling 에이전트
+> **개발자 회고 에이전트** — 오늘 GitHub에 올린 커밋을 분석해서, 실제 근거에 기반한 회고를
+> 자동으로 작성하고 노션에 정리해주는 멀티 에이전트 시스템
 
 ---
 
@@ -10,140 +10,166 @@
 - [핵심 아이디어](#핵심-아이디어)
 - [사용 시나리오](#사용-시나리오)
 - [아키텍처](#아키텍처)
-  - [LangGraph 그래프 구조 — ReAct 루프](#langgraph-그래프-구조--react-루프)
-  - [search_notion 내부 파이프라인](#search_notion-내부-파이프라인)
-- [도구 목록](#도구-목록)
+  - [멀티 에이전트 구조](#멀티-에이전트-구조)
+  - [에이전트별 역할·입출력](#에이전트별-역할입출력)
+- [노션 저장 구조](#노션-저장-구조)
 - [기술 스택](#기술-스택)
 - [프로젝트 구조](#프로젝트-구조)
 - [설치 및 실행](#설치-및-실행)
-- [API](#api)
 - [설계 결정](#설계-결정)
+- [로드맵](#로드맵)
 
 ---
 
 ## 핵심 아이디어
 
-노션을 오래 쓸수록 정보는 여러 페이지에 흩어집니다. 무언가를 다시 찾으려면 검색창에 키워드를
-바꿔가며 넣어보고, 여러 페이지를 열어 읽고, 머릿속으로 종합해야 합니다.
+개발자에게 그날 공부하고 개발한 내용을 회고 형식으로 정리하는 습관은 중요하지만, 매일 직접 쓰기는
+번거롭습니다. 반면 **그날 무엇을 했는지에 대한 가장 정확한 기록은 이미 GitHub 커밋에 존재**합니다.
 
-이 프로젝트는 그 과정을 에이전트가 대신합니다 — **흩어진 노트를 찾아 하나의 답변으로 종합하고,
-어느 페이지에서 가져온 내용인지 출처 페이지 링크와 함께 전달**합니다. 나아가 새 내용을 적을 때는
-적절한 위치를 판단해서 작성하고, 자연어로 말한 일정을 캘린더에 등록합니다.
+이 프로젝트는 그 커밋 기록을 근거 삼아 회고를 대신 작성합니다. 핵심은 **"오늘 실제로 한 일"과
+"회고에 적힌 내용"이 반드시 일치하도록 검증**하는 것 — 안 한 일을 했다고 지어내면 안 되기 때문에,
+생성된 회고는 항상 원본 커밋·코드 변경 내용에 근거했는지 확인을 거칩니다.
 
 | 사람이 직접 하면 | 에이전트가 하면 |
 |---|---|
-| 검색창에 키워드를 넣고, 여러 페이지를 열어 읽고, 머릿속으로 종합 | 흩어진 노트를 찾아 종합한 답변을 **출처 페이지 링크와 함께** 전달 |
-| 어느 페이지에 적을지 고민하고, 중복인지 기존 노트를 뒤져봄 | **관련 노트를 먼저 검색해서 "이어붙일지 / 새로 만들지" 판단** 후 확인을 구함 |
-| 캘린더를 열고 날짜·시간을 클릭해 입력 | "다음주 화요일 3시 팀 미팅"이라는 **자연어를 해석**해 일정 항목 생성 |
-
-구조는 **LLM이 매 턴 어떤 도구를 쓸지 스스로 결정하는 ReAct 루프**입니다. 요청마다 실제로 다른
-경로(검색 / 작성 / 일정 / 그냥 대화)를 타기 때문에, 그래프 분기가 형식적이지 않고 실질적으로
-동작합니다.
-
----
+| 그날 뭘 했는지 기억을 더듬어 회고를 씀 | 커밋·diff를 근거로 **실제로 한 일만** 회고에 반영 (근거검증) |
+| 노션에 새 페이지를 만들지, 오늘 항목을 덮어쓸지 매번 확인 | 오늘 항목이 이미 있는지 확인 후 신규/갱신 판단 + 승인 요청 |
+| 여러 레포를 각각 따로 기록 | 레포별로 구조화된 데이터베이스에 날짜순으로 정리 |
 
 ## 사용 시나리오
 
-**A. 검색·질의응답** (도구: `search_notion`)
+**A. 정상 흐름 — 오늘 활동이 있는 경우**
 
-> "저번주에 진행한 프로젝트A 정리한 문서에서 어떤 내용 협의했는지 확인할 수 있나?"
+프론트엔드에서 레포를 선택하고 "오늘 회고 작성" 버튼 클릭
+→ 커밋 분석(사소한 커밋은 메시지만, 의미 있는 변경은 diff까지 확인)
+→ 회고 초안 생성 + 근거 검증
+→ "이 내용으로 저장할까요?" 승인 요청
+→ 승인 시 노션 데이터베이스에 저장, 링크 반환
 
-관련 노트 검색 → 관련성 평가 → (실패 시 질의 재작성 후 재검색) → 여러 노트 종합 답변 → 근거 검증 →
-"[프로젝트A 회의록] 페이지에 이렇게 정리되어 있어요: ..." + 원본 페이지 링크
+**B. 활동이 없는 경우**
 
-**B. 노트 작성 — 신규 또는 병합** (도구: `write_note` + 승인)
+오늘 커밋이 하나도 없으면, 회고를 억지로 만들지 않고 "오늘은 기록할 활동이 없어요"로 즉시 종료합니다.
 
-> "오늘 인터뷰 스터디에서 STAR 기법 배웠어, 나중에 참고하게 적어줘"
+**C. 수정 요청이 있는 경우**
 
-관련 기존 노트 검색 → 없으면 "새 페이지로 만들까요?", 있으면 "[인터뷰 준비] 페이지에 이어붙일까요?" →
-**사용자 승인 후** 실행
-
-**C. 일정 등록** (도구: `create_event` + 승인)
-
-> "다음주 화요일 3시에 팀 미팅 잡아줘"
-
-자연어에서 날짜·시간·제목 해석 → "7/21(화) 15:00 '팀 미팅' 일정을 등록할까요?" → **승인 후**
-캘린더 뷰로 사용 중인 노션 데이터베이스에 날짜 속성을 채운 페이지 생성
-
-**D. 일반 대화** (도구 없음)
-
-> "LangGraph에서 interrupt가 뭐야?"
-
-검색·작성이 필요 없는 질문은 도구 호출 없이 바로 답변하고 종료 — LLM이 "도구가 필요 없다"고 판단하는
-것 자체가 하나의 경로
+승인 대신 "이 부분 다르게 써줘"라고 응답하면, 회고를 다시 작성해 **이전 안과 달라진 점을 보여주고**
+재승인을 요청합니다. 승인될 때까지 반복됩니다.
 
 ---
 
 ## 아키텍처
 
-### LangGraph 그래프 구조 — ReAct 루프
-
-실선은 구현 완료, 점선은 구현 예정입니다.
+### 멀티 에이전트 구조
 
 ```mermaid
 flowchart TD
-    START([START]) --> agent
+    START([버튼 클릭 - repo, date]) --> a1
 
-    agent["agent<br/>Gemini가 도구 선택 또는 답변 생성"]
-    tools["tools<br/>도구 실행 - ToolNode"]
-    confirm["confirm_action<br/>사용자 승인 대기 - interrupt"]:::planned
+    subgraph analyst[commit_analyst]
+        direction TB
+        a1["fetch_commits(repo, date)"]
+        a2{diff까지 볼 가치 있나?}
+        a3["fetch_diff(sha)"]
+        a4[CommitAnalysis]
+        a1 --> a2
+        a2 -->|의미 있는 변경| a3 --> a4
+        a2 -.->|사소한 커밋| a4
+    end
 
-    agent -->|도구 호출 없음 - 답변 완성| END([END])
-    agent -->|도구 호출 있음| tools
-    agent -.->|쓰기 도구 - 예정| confirm
+    a4 -->|has_activity: false| END1([종료 - 활동 없음])
+    a4 -->|has_activity: true| w1
 
-    confirm -.->|승인| tools
-    confirm -.->|거절 - 사유와 함께 재판단| agent
+    subgraph writer[report_writer]
+        direction TB
+        w1["fetch_readme(repo)<br/>배경 맥락 참고용"]
+        w2[초안 생성]
+        w3{근거검증 통과?}
+        w4[RetroDraft]
+        w1 --> w2 --> w3
+        w3 -->|실패 - 최대 2회| w2
+        w3 -->|통과| w4
+    end
 
-    tools -->|실행 결과를 메시지로 추가| agent
+    w4 --> n1
 
-    classDef planned stroke-dasharray: 5 5,fill:#f5f5f5,color:#888;
+    subgraph notion[notion_writer]
+        direction TB
+        n1["check_existing_entry(repo, date)"]
+        n2[confirm_action - interrupt]
+        n1 --> n2
+    end
+
+    n2 -->|승인| n3["create_or_update_entry"] --> END2([저장 완료])
+    n2 -.->|거절 + 수정요청 - 이전 안과 diff 표시| w2
 ```
 
-**핵심 설계 포인트 1 — 조건부 엣지는 도구 개수만큼 늘어나지 않음**: "어떤 도구를 쓸지"는 그래프 엣지가
-아니라 `agent` 노드 안에서 LLM(`bind_tools`)이 이미 결정합니다. 그래프가 판단하는 것은
-"도구 호출이 있는가 / 그것이 쓰기 도구인가"라는 단순한 분기뿐이라, 도구가 늘어나도 그래프 구조는
-그대로입니다.
+**핵심 설계 포인트 1 — 판단이 필요한 지점에만 자율성을 준다**: `commit_analyst`는 각 커밋을 보고
+"diff까지 볼 가치가 있는가"를 스스로 판단합니다(사소한 커밋은 메시지만, 의미 있는 변경은 diff 조회).
+반면 전체 실행 순서(분석 → 작성 → 저장)는 고정입니다. 모든 지점에 자율성을 주면 실행이 불안정해지고,
+전혀 안 주면 그냥 고정 파이프라인이 되어 "에이전트"라 부르기 어려워집니다 — 이 프로젝트는 그 경계를
+**"diff를 볼지 말지"라는 바운더리 있는 판단 하나**로 정했습니다.
 
-**핵심 설계 포인트 2 — 쓰기만 승인을 받음**: 검색(읽기)은 실패해도 되돌릴 것이 없지만, 작성(쓰기)은
-잘못되면 기존 노트를 오염시킵니다. 그래서 `write_note`·`create_event`만 `confirm_action`
-(LangGraph `interrupt()` 기반 human-in-the-loop)을 거치고, 읽기 도구는 바로 실행합니다.
+**핵심 설계 포인트 2 — 생성과 저장을 분리한다**: `report_writer`는 노션 API를 전혀 모르고, 텍스트만
+만듭니다. `notion_writer`는 반대로 텍스트를 수정하는 능력이 없고, 저장 여부만 판단합니다. 수정
+요청이 오면 `notion_writer`가 직접 고치는 게 아니라 `report_writer`로 되돌아가는 엣지로 처리합니다 —
+"판단/생성 노드"와 "실행 노드"를 분리하는 원칙을 그대로 적용한 것입니다.
 
-**핵심 설계 포인트 3 — 상태는 MessagesState 기반**: 비서는 여러 턴의 대화와 도구 호출 이력을
-이어가야 하므로, 메시지 리스트를 누적(`add_messages` 리듀서)하는 `MessagesState` 기반 상태를
-사용합니다. checkpointer가 `thread_id`별로 상태를 저장·복원해 멀티턴 대화를 지원합니다.
+**핵심 설계 포인트 3 — "내일 할 일"은 넣지 않는다**: README만으로 프로젝트의 실제 우선순위·맥락을
+파악하는 것은 위험한 추측입니다. 이 에이전트는 **이미 일어난 일을 검증된 형태로 서술**하는 것까지만
+책임지고, 앞으로의 계획 예측은 스코프에서 제외했습니다.
 
-### search_notion 내부 파이프라인
+### 에이전트별 역할·입출력
 
-> 구현 예정인 내부 설계입니다.
+**`commit_analyst`**
+- 도구: `fetch_commits(repo, date)`, `fetch_diff(commit_sha)`
+- 출력:
+  ```python
+  class CommitAnalysis(BaseModel):
+      has_activity: bool       # 오늘 커밋이 있었는지 (분기 기준)
+      commit_count: int
+      summary: str              # 오늘 있었던 작업 서술
+      key_changes: list[str]    # 주요 변경사항 목록
+  ```
 
-개인 노트는 LLM이 사전학습에서 전혀 본 적 없는 내용이라, **근거 검증 없이는 신뢰할 수 있는 답이
-성립하지 않습니다.** 그래서 단순 "검색 → 생성"이 아니라 관련성 평가·질의 재작성·근거 검증을 거치는
-파이프라인으로 구성합니다.
+**`report_writer`**
+- 도구: `fetch_readme(repo)` (배경 맥락 참고용 — 예측이 아닌 서술 보조)
+- 입력: `CommitAnalysis`
+- 내부: 초안 생성 → `key_changes`에 실제로 근거하는지 검증 → 실패 시 최대 2회 재생성
+- 출력:
+  ```python
+  class RetroDraft(BaseModel):
+      report: str        # 회고 본문
+      grounded: bool       # 근거검증 통과 여부
+  ```
 
-```mermaid
-flowchart LR
-    Q([검색 질의]) --> Retrieve["벡터 검색<br/>ChromaDB"]
-    Retrieve --> Grade["grade_documents<br/>관련성 평가"]
-    Grade -->|관련 있음| Gen["generate<br/>여러 노트 종합"]
-    Grade -->|관련 없음| Transform["transform_query<br/>질의 재작성"]
-    Transform --> Retrieve
-    Gen --> Hallu["grade_hallucination<br/>근거 검증"]
-    Hallu --> A([종합 답변 + 원본 페이지 링크])
-```
+**`notion_writer`**
+- 도구: `check_existing_entry(repo, date)`, `create_or_update_entry(...)`
+- 입력: `RetroDraft`
+- 내부: 기존 항목 확인 → `confirm_action`(interrupt 기반 HITL) → 승인 시 저장, 거절 시 `report_writer`로 회귀
+- 출력:
+  ```python
+  class WriteResult(BaseModel):
+      status: Literal["saved", "updated", "pending_confirmation"]
+      page_url: str | None
+      is_new_entry: bool
+  ```
 
 ---
 
-## 도구 목록
+## 노션 저장 구조
 
-> 현재는 ReAct 루프 검증용 더미 도구(`get_current_time`)만 연결되어 있으며, 아래 4개가 목표 도구입니다.
+프리폼 페이지 트리(레포 페이지 → 날짜별 하위 페이지)가 아니라 **단일 데이터베이스**로 구성합니다.
 
-| 도구 | 역할 | 성격 | 승인(HITL) |
-|------|------|------|:---:|
-| `search_notion` | 내 노션 페이지를 검색해 근거 검증을 거친 종합 답변 생성 | 읽기 | ✕ |
-| `web_search` | 노션에 없는 일반 지식·최신 정보 검색 | 읽기 | ✕ |
-| `write_note` | 관련 기존 페이지를 먼저 검색해 "병합 / 신규" 판단 후 작성 | 쓰기 | ✓ |
-| `create_event` | 자연어 일정을 해석해 캘린더 뷰 데이터베이스에 항목 생성 | 쓰기 | ✓ |
+| 레포명 (속성) | 날짜 (속성) | 회고 내용 |
+|---|---|---|
+| dev-retro-agent | 2026-07-27 | ... |
+| dev-retro-agent | 2026-07-26 | ... |
+
+프리폼 페이지 구조였다면 "오늘 항목이 이미 있는지"를 제목 문자열 비교로 확인해야 했겠지만(Notion
+API가 페이지 제목만 검색 가능하다는 제약 때문), 속성 기반 데이터베이스는
+`databases.query(filter: 레포명==X, 날짜==오늘)`로 **정확하게 필터링**할 수 있습니다. 벡터 인덱스나
+증분 동기화 같은 별도 검색 인프라가 필요 없습니다 — 이 프로젝트가 다루는 데이터가 애초에 구조화된
+성격(레포+날짜)이기 때문입니다.
 
 ---
 
@@ -153,67 +179,64 @@ flowchart LR
 |------|------|----------|
 | 언어 | Python 3.13 | — |
 | 프레임워크 | FastAPI | 비동기 지원, 자동 Swagger 문서화 |
-| 오케스트레이션 | LangChain · LangGraph | ReAct 루프 + human-in-the-loop(`interrupt`)를 상태 그래프로 표현 |
+| 오케스트레이션 | LangChain · LangGraph | 멀티 에이전트 그래프 + human-in-the-loop(`interrupt`) |
 | LLM | Google Gemini 2.5 Flash | tool-calling 지원, instruction-following 우수, 무료 티어 제공 |
-| 임베딩 | Qwen3-Embedding-0.6B (로컬) | 32K 토큰까지 처리 — 긴 노트도 잘림 없이 임베딩, 호출 비용 없음 |
-| 벡터 DB | ChromaDB (로컬 파일) | 별도 서버 없이 파일 기반으로 영속화 |
-| 외부 연동 | Notion API (`notion-client`) | 페이지 목록·본문 조회, 페이지 생성 — 무료, rate limit 3 req/s |
-| 웹검색 | Tavily (예정) | RAG용으로 설계된 검색 API, 무료 티어 제공 |
-| 모니터링 | LangSmith | 도구 선택·그래프 실행 과정 자동 트레이싱 |
+| 외부 연동 | GitHub API (`PyGithub`) | 커밋·diff·README 조회, 개인 액세스 토큰(PAT)으로 인증 |
+| 외부 연동 | Notion API (`notion-client`) | 데이터베이스 조회·생성, 무료, rate limit 3 req/s |
+| 모니터링 | LangSmith | 멀티 에이전트 실행 과정 자동 트레이싱 |
 | 패키지 관리 | uv | 빠른 의존성 해석, `pyproject.toml` + `uv.lock` |
+
+> **이전 버전(notion-assistant) 대비 의존성 감소**: 개인 노트 검색을 위한 벡터 임베딩
+> (Qwen3-Embedding-0.6B, torch, sentence-transformers)이 더 이상 필요 없습니다. 이 프로젝트가
+> 다루는 데이터(GitHub 커밋, 노션 DB 항목)는 전부 구조화된 조회로 처리 가능하기 때문입니다. 이는
+> 배포 이미지 크기와 런타임 메모리 요구량도 함께 줄여줍니다.
 
 ---
 
 ## 프로젝트 구조
 
-> ReAct 뼈대(agent ⇄ tools 루프, thread_id 기반 대화 API)는 구현 완료. 노션 연동 도구와
-> 승인 노드는 구현 예정입니다.
-
 ```
-langgraph-agent/
+dev-retro-agent/
 ├── src/
-│   ├── main.py                  # FastAPI 앱 진입점
+│   ├── main.py
 │   │
 │   ├── router/
-│   │   └── agent_router.py      #   /agent — 비서 대화 엔드포인트 (thread_id 기반)
+│   │   ├── agent_router.py       # 회고 생성 트리거 엔드포인트
+│   │   └── github_router.py      # 레포 목록 조회·선택 (일반 API, 에이전트 아님)
 │   │
 │   ├── schemas/
-│   │   └── agent_schema.py      #   요청/응답 모델 (message, thread_id)
+│   │   ├── agent_schema.py
+│   │   └── github_schema.py
 │   │
 │   ├── core/
-│   │   ├── config.py            #   pydantic-settings 기반 환경변수
-│   │   └── llm.py               #   Gemini · 임베딩 모델 인스턴스
+│   │   ├── config.py
+│   │   └── llm.py                # Gemini 인스턴스만 (임베딩 제거)
 │   │
-│   ├── graph/                   # LangGraph "조립/실행"만 담당
-│   │   ├── state.py             #   AgentState (MessagesState 기반)
+│   ├── graph/
+│   │   ├── state.py              # RetroState (repo, date, commit_analysis, retro_draft, write_result)
 │   │   ├── nodes/
-│   │   │   ├── agent.py         #     agent 노드 + 라우팅 함수 (bind_tools된 LLM 호출)
-│   │   │   └── confirm.py       #     confirm_action — interrupt 기반 승인 (예정)
-│   │   └── graph.py             #   StateGraph 조립 + checkpointer + compile
+│   │   │   ├── commit_analyst.py
+│   │   │   ├── report_writer.py
+│   │   │   ├── notion_writer.py
+│   │   │   └── confirm.py        # interrupt 기반 HITL
+│   │   └── graph.py
 │   │
-│   ├── tools/                   # 에이전트 도구 정의 (@tool)
-│   │   ├── get_current_time.py  #   루프 검증용 더미 도구 (추후 삭제)
-│   │   ├── search_notion.py     #   (예정)
-│   │   ├── web_search.py        #   (예정)
-│   │   ├── write_note.py        #   (예정)
-│   │   └── create_event.py      #   (예정)
+│   ├── tools/
+│   │   ├── fetch_commits.py
+│   │   ├── fetch_diff.py
+│   │   ├── fetch_readme.py
+│   │   ├── check_existing_entry.py
+│   │   └── create_or_update_entry.py
 │   │
-│   ├── services/                # 재사용 가능한 "부품"
-│   │   ├── notion_client.py     #   Notion API 래핑 (예정)
-│   │   ├── prompts.py           #   yaml → ChatPromptTemplate 로딩
-│   │   └── utils.py
+│   ├── services/
+│   │   ├── github_client.py      # GitHub API 래핑
+│   │   ├── notion_client.py      # Notion API 래핑
+│   │   └── prompts.py
 │   │
-│   └── prompts/                 # 프롬프트 템플릿 (yaml)
+│   └── prompts/
 │
-└── data/
-    └── chroma_db/               # 노션 페이지 벡터 인덱스 (git 제외)
+└── frontend/                      # 레포 선택 + 회고 생성 버튼 (간단한 SPA)
 ```
-
-**모듈 구성 원칙**
-
-- `services/` — 누가 쓰든 상관없는 **재사용 부품**
-- `graph/` — 노드를 어떤 **순서/조건**으로 실행할지만 담당
-- `tools/` — `services/`의 부품을 조합해 에이전트에게 노출하는 **도구 인터페이스**
 
 ---
 
@@ -227,93 +250,71 @@ uv sync
 
 ### 2. 환경변수 설정
 
-프로젝트 루트에 `.env` 파일을 생성합니다.
-
 ```env
-# LangSmith
-LANGSMITH_TRACING=true
-LANGSMITH_ENDPOINT=https://api.smith.langchain.com
-LANGSMITH_API_KEY=your_langsmith_api_key
-LANGSMITH_PROJECT=notion-assistant
-
-# Google Gemini
 GOOGLE_API_KEY=your_google_api_key
-
-# Notion — 내부 통합(internal integration) 토큰
+GITHUB_TOKEN=your_github_personal_access_token
 NOTION_API_KEY=your_notion_integration_token
-
-# 일정 등록 대상 데이터베이스 (캘린더 뷰로 사용 중인 DB)
-NOTION_CALENDAR_DB_ID=your_database_id
+NOTION_RETRO_DB_ID=your_database_id
 ```
-
-> Notion 통합 토큰은 [notion.so/my-integrations](https://www.notion.so/my-integrations)에서 발급하고,
-> 검색·작성 대상 페이지에 해당 통합을 **연결(connection 추가)** 해야 API로 접근할 수 있습니다.
 
 ### 3. 서버 실행
 
 ```bash
-uv run uvicorn src.main:app --reload --reload-exclude "data/*" --reload-exclude ".git/*"
+uv run uvicorn src.main:app --reload
 ```
 
 - Swagger UI: `http://localhost:8000/docs`
 
 ---
 
-## API
-
-### `POST /api/agent`
-
-`thread_id`가 같으면 이전 대화에 이어서 응답합니다(멀티턴).
-
-```json
-// Request
-{ "message": "지금 몇 시야?", "thread_id": "user-session-1" }
-
-// Response
-{ "message": "지금은 2026년 7월 21일 11시 48분 27초입니다." }
-```
-
-**승인 흐름 (구현 예정)** — 쓰기 도구는 실행 전에 그래프가 일시정지(`interrupt`)되고,
-같은 `thread_id`로 승인 응답을 보내면 이어서 실행됩니다.
-
-```json
-// Request
-{ "message": "다음주 화요일 3시에 팀 미팅 잡아줘", "thread_id": "user-session-1" }
-
-// Response — 승인 대기
-{ "status": "pending_confirmation", "message": "7/21(화) 15:00 '팀 미팅' 일정을 캘린더에 등록할까요?" }
-```
-
----
-
 ## 설계 결정
 
 <details>
-<summary><b>왜 Notion AI를 쓰지 않고 직접 만드는가</b></summary>
+<summary><b>왜 2개 도구가 아니라 멀티 에이전트인가</b></summary>
 
-Notion AI는 유료 구독(Business 플랜 이상)이지만, Notion의 일반 API는 무료입니다.
-API 위에 Gemini(무료 티어)와 로컬 임베딩을 조합하면 구독료 없이 같은 목적을 달성할 수 있습니다.
-다만 이 프로젝트의 주 목적은 비용 절감보다 **LangGraph 에이전트 패턴(ReAct 루프, HITL, 도구 설계)의
-실습·포트폴리오**이며, Notion AI의 대체 상품이 아니라 개인 워크스페이스용 자동화 도구입니다.
-(사내 자동화·개인 자동화는 Notion이 Developer Platform으로 공식 권장하는 사용 방식입니다.)
+처음엔 `generate_daily_report` + `write_report` 2개 도구를 하나의 ReAct 루프가 호출하는 구조를
+고려했습니다. 하지만 이 구조는 내부가 고정 순서 파이프라인이라 "정교한 워크플로우"이지 "멀티
+에이전트"라 부르기 어려웠습니다. 그래서 각자 독립된 도구 접근과 판단 범위를 가진 `commit_analyst` /
+`report_writer` / `notion_writer` 세 에이전트로 재설계했습니다. 다만 전체 무제한 자율성(에이전트가
+전체 실행 순서까지 매번 판단)은 스코프 규율(완성도 우선)과 충돌하므로, "diff를 볼지 말지"처럼
+바운더리 있는 판단 하나에만 자율성을 부여했습니다.
 </details>
 
 <details>
-<summary><b>왜 고정 분기 그래프가 아니라 ReAct 루프인가</b></summary>
+<summary><b>왜 "내일 할 일" 제안을 넣지 않는가</b></summary>
 
-고정 분기 그래프는 모든 분기 경우의 수를 사람이 미리 설계해야 합니다. 흐름이 하나로 정해진
-태스크에는 맞지만, 비서는 요청 유형(검색/작성/일정/잡담)이 매번 달라서 경우의 수를 미리 나열할 수
-없습니다. ReAct 루프는 "어떤 도구를 쓸지"를 LLM의 tool-calling에 맡기고, 그래프는
-"도구 호출 여부 / 쓰기 여부"라는 단순한 분기만 담당합니다.
-`create_react_agent` 프리빌트를 쓰지 않고 StateGraph로 직접 조립하는 이유는, 쓰기 도구 앞에
-**승인 노드(confirm_action)를 끼워 넣어야** 하기 때문입니다 — 프리빌트는 이 지점을 커스텀할 수 없습니다.
+README만으로는 프로젝트의 실제 우선순위, 진행 중인 이슈, 팀 논의 맥락을 알 수 없습니다. 이 상태에서
+"내일 할 일"을 생성하면 근거 없는 추측이 됩니다. 반면 회고(이미 일어난 일의 서술)는 커밋·diff라는
+확실한 근거가 있어 검증이 가능합니다. 그래서 이 프로젝트는 "검증 가능한 것"까지만 책임지도록
+스코프를 좁혔습니다.
 </details>
 
 <details>
-<summary><b>왜 write_note는 저장 전에 검색부터 하는가</b></summary>
+<summary><b>왜 노션 저장을 프리폼 페이지가 아니라 데이터베이스로 하는가</b></summary>
 
-"기존에 관련 페이지가 있는지"를 LLM 단독 판단에 맡기면 존재하지 않는 페이지를 있다고 착각할 수
-있습니다. 검색 오류는 틀린 답을 주는 것에 그치지만, **쓰기 오류는 엉뚱한 페이지를 오염**시킵니다.
-그래서 저장 전에 `search_notion`과 같은 검색 경로로 후보를 확보하고, 그 근거 위에서
-"이어붙일지 / 새로 만들지"를 판단한 뒤, 최종 실행은 사용자 승인을 거칩니다.
+Notion API의 `search` 엔드포인트는 페이지 제목만 검색합니다(본문 검색 불가). 프리폼 페이지 트리로
+저장하면 "오늘 항목이 이미 있는지" 확인할 때 이 제약에 걸립니다. 반면 레포명·날짜를 정식 속성으로
+갖는 데이터베이스는 `databases.query`로 정확한 필터링이 가능해 이 문제를 원천적으로 피합니다. 이
+프로젝트가 다루는 데이터(레포+날짜)가 애초에 표 형태로 구조화하기 적합하다는 점도 이 선택을
+뒷받침합니다.
 </details>
+
+<details>
+<summary><b>왜 개인 액세스 토큰(PAT)이고 서비스화하지 않는가</b></summary>
+
+GitHub·Notion 모두 개인/단일 워크스페이스 전용 인증(Internal Integration, PAT)을 사용합니다. 이
+방식은 "혼자 쓰는 개인 자동화" 또는 "한 회사가 자기 워크스페이스에서 여러 직원과 함께 쓰는 사내
+도구"에는 완전히 적합하지만, 여러 조직에 판매하는 멀티테넌트 서비스로는 확장할 수 없습니다(각
+조직이 자기 계정으로 로그인해 권한을 위임하는 OAuth가 필요). 이 프로젝트는 의도적으로 전자로
+스코프를 잡았고, 서비스화가 필요해지면 인증 계층만 OAuth로 교체하면 되는 구조입니다.
+</details>
+
+---
+
+## 로드맵
+
+- [ ] `commit_analyst` — GitHub API 연동, 커밋/diff 조회, 분석 판단 로직
+- [ ] `report_writer` — 회고 생성 + 근거검증 파이프라인
+- [ ] `notion_writer` — 노션 데이터베이스 연동, `confirm_action` 기반 승인+재수정 루프
+- [ ] 레포 선택 화면 (프론트엔드 + `github_router` API)
+- [ ] 배포 재정비 (임베딩 의존성 제거로 가벼워진 이미지 반영)
