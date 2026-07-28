@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     LANGSMITH_API_KEY: str = ""
     LANGSMITH_PROJECT: str = "langgraph-agent"
 
-    GEMINI_MODEL: str = "gemini-2.5-flash"
+    GEMINI_MODEL: str = "gemini-3.5-flash-lite"
     GEMINI_TEMPERATURE: float = 0.3
 
     ANTHROPIC_MODEL: str = "claude-sonnet-5"
