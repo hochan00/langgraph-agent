@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ko">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>dev-retro-agent</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+
+<body>
+  <div class="app">
+    <header>
+      <h1>커밋 회고 에이전트</h1>
+      <div class="thread-id">
+        thread: <span id="threadIdDisplay"></span>
+        <button type="button" id="newThreadBtn">새 대화</button>
+      </div>
+    </header>
+
+    <div id="log">
+      <div class="empty" id="emptyState">
+        POST /api/agent 로 메시지를 보내고 응답을 확인하는 테스트용 콘솔입니다.<br />
+        아래 입력창에 메시지를 입력하고 Enter(Shift+Enter는 줄바꿈)를 누르세요.
+      </div>
+    </div>
+
+    <form id="form">
+      <textarea id="input" placeholder="메시지를 입력하세요..." rows="1"></textarea>
+      <button type="submit" id="sendBtn">전송</button>
+    </form>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
+  <script src="script.js"></script>
+</body>
+
+</html>

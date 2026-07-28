@@ -5,6 +5,7 @@ load_dotenv()
 import logging
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from src.router import agent_router
 
@@ -14,6 +15,9 @@ app = FastAPI(title="langgraph-agent", version="0.1.0")
 app.include_router(agent_router.router, prefix="/api")
 
 
-@app.get("/")
+@app.get("/health")
 def health_check():
     return {"status": "online", "message": "langgraph-agent server is running"}
+
+
+app.mount("/", StaticFiles(directory="static", html=True), name="static")
