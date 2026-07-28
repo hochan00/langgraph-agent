@@ -1,13 +1,31 @@
-from langchain_core.messages import HumanMessage
+from datetime import datetime, timedelta
 
-from src.graph.nodes.agent import agent
+from dotenv import load_dotenv
 
-result = agent({"messages": [HumanMessage("지금 몇 시야?")]})
-msg = result["messages"][0]
-print(msg.tool_calls)  # [{'name': 'get_current_time', ...}] 나오면 성공
-print(msg.content)  # 도구 호출일 땐 보통 빈 문자열
+load_dotenv()
 
-result2 = agent({"messages": [HumanMessage("안녕!")]})
-msg2 = result2["messages"][0]
-print(msg2.tool_calls)  # [] — 도구 불필요 판단
-print(msg2.content)  # 일반 인사 답변
+
+from github import Github
+
+from src.core.config import settings
+
+gh = Github(settings.GITHUB_TOKEN)
+
+username = gh.get_user().login
+one_month_ago = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+commits = gh.search_commits(query=f"author:{username} author-date:>{one_month_ago}")
+
+repo_names = set()
+for commit in commits:
+    repo_names.add(commit.repository.full_name)
+
+print(repo_names)
+
+# repos = gh.get_user().get_repos(type="owner")
+# for repo in repos:
+#    print(repo.full_name)
+
+repository = gh.get_repo("hochan00/langgraph-agent")
+commits = repository.get_commits()
+for commit in commits:
+    print(commit.commit.message)
