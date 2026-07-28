@@ -11,7 +11,7 @@ router = APIRouter(tags=["Agent"])
 
 @router.post("/agent", response_model=AgentResponse)
 def agent_graph(req: AgentRequest):
-    """Agent 기반 노션 작업 비서"""
+    """개발 회고 자동 생성 에이전트"""
     result = graph.invoke(
         {"messages": [("user", req.message)]},
         config={"configurable": {"thread_id": req.thread_id}},
