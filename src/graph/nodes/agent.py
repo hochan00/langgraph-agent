@@ -1,7 +1,9 @@
 from src.core.llm import get_llm
 from src.graph.state import AgentState
+from src.tools.fetch_commits import fetch_commits
+from src.tools.list_repo import list_repos
 
-tools = []
+tools = [list_repos, fetch_commits]
 
 
 def agent(state: AgentState) -> dict:
