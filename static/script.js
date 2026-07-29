@@ -11,9 +11,22 @@ const EMPTY_STATE_HTML = `
   아래 입력창에 메시지를 입력하고 Enter(Shift+Enter는 줄바꿈)를 누르세요.
 `;
 
+// crypto.randomUUID()는 HTTPS/localhost 같은 secure context에서만 존재한다.
+// HTTP로만 서빙되는 배포 환경(EC2 등)에서도 동작하도록 폴백을 둔다.
+function generateId() {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
 let threadId = localStorage.getItem(THREAD_ID_KEY);
 if (!threadId) {
-  threadId = crypto.randomUUID();
+  threadId = generateId();
   localStorage.setItem(THREAD_ID_KEY, threadId);
 }
 
@@ -24,7 +37,7 @@ function renderThreadId() {
 renderThreadId();
 
 newThreadBtn.addEventListener("click", () => {
-  threadId = crypto.randomUUID();
+  threadId = generateId();
   localStorage.setItem(THREAD_ID_KEY, threadId);
   renderThreadId();
   log.innerHTML = `<div class="empty" id="emptyState">${EMPTY_STATE_HTML}</div>`;
