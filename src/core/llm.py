@@ -6,8 +6,8 @@ from src.core.config import settings
 
 # def get_llm() -> ChatAnthropic:
 #    return ChatAnthropic(model=settings.ANTHROPIC_MODEL)
-def get_llm(temperature: float | None = None) -> ChatGoogleGenerativeAI:
+def get_llm() -> ChatGoogleGenerativeAI:
     return ChatGoogleGenerativeAI(
         model=settings.GEMINI_MODEL,
-        temperature=temperature or settings.GEMINI_TEMPERATURE,
+        temperature=settings.GEMINI_TEMPERATURE,
     )
