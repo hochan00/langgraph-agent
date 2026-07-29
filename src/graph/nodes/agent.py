@@ -40,7 +40,9 @@ def agent(state: AgentState) -> dict:
 def route_agent_result(state: AgentState) -> str:
     if state["messages"][-1].tool_calls:
         return "continue"
-    return "end"
+    if state.get("repo"):
+        return "end"
+    return "wait"
 
 
 def _extract_text(content: str | list) -> str:
