@@ -10,7 +10,7 @@ router = APIRouter(tags=["Agent"])
 
 
 def _extract_text(content: str | list) -> str:
-    """Claude 응답의 content가 문자열이 아니라 블록 리스트로 올 수 있어 텍스트만 추출한다."""
+    """모델 응답에 따라 content가 문자열이 아니라 블록 리스트로 올 수 있어 텍스트만 추출한다."""
     if isinstance(content, str):
         return content
     return "".join(
