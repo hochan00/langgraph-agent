@@ -6,9 +6,4 @@ services:
       - "8000:8000"             # 호스트 8000 → 컨테이너 8000 연결 (localhost:8000 접속용)
     env_file:
       - .env                    # .env의 비밀키를 컨테이너에 환경변수로 주입 (이미지엔 안 구움)
-    volumes:
-      - ./data:/app/data                    # ChromaDB 영속화 — 컨테이너 지워도 데이터 유지
-      - hf_cache:/root/.cache/huggingface   # 임베딩 모델 캐시 — 1.2GB 재다운로드 방지
 
-volumes:
-  hf_cache:                     # 위에서 사용한 hf_cache 볼륨 선언 (도커가 관리)
