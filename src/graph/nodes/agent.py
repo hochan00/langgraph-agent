@@ -6,9 +6,10 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from src.core.llm import get_llm
 from src.graph.state import AgentState
 from src.tools.fetch_commits import fetch_commits
+from src.tools.fetch_diff import fetch_diff
 from src.tools.list_repo import list_repos
 
-tools = [list_repos, fetch_commits]
+tools = [list_repos, fetch_commits, fetch_diff]
 
 _DATA = yaml.safe_load(
     (Path(__file__).resolve().parents[2] / "prompts" / "AGENT_PROMPT.yaml").read_text()
