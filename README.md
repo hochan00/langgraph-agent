@@ -17,7 +17,7 @@
 - [프로젝트 구조](#프로젝트-구조)
 - [설치 및 실행](#설치-및-실행)
 - [설계 결정](#설계-결정)
-- [로드맵](#로드맵)
+- [구현 현황](#구현-현황)
 
 ---
 
@@ -131,9 +131,11 @@ flowchart TD
 요청이 오면 `notion_writer`가 직접 고치는 게 아니라 `report_writer`로 되돌아가는 엣지로 처리합니다 —
 "판단/생성 노드"와 "실행 노드"를 분리하는 원칙을 그대로 적용한 것입니다.
 
-**핵심 설계 포인트 3 — "내일 할 일"은 넣지 않는다**: README만으로 프로젝트의 실제 우선순위·맥락을
-파악하는 것은 위험한 추측입니다. 이 에이전트는 **이미 일어난 일을 검증된 형태로 서술**하는 것까지만
-책임지고, 앞으로의 계획 예측은 스코프에서 제외했습니다.
+**핵심 설계 포인트 3 — LLM이 판단할 것과 코드가 보장할 것을 나눈다**: 회고 내용 요약처럼 판단이
+필요한 일은 LLM이 맡지만, **이미 확정된 사실은 LLM에게 다시 묻지 않습니다.** 예를 들어 `repo`는
+`fetch_commits`가 호출되는 순간 그 인자값을 그대로 상태에 저장하고, 이후 `fetch_diff`에는
+`InjectedState`로 자동 주입합니다. LLM의 도구 스키마에서 해당 인자가 아예 제외되므로 값을 잘못
+재생성할 여지가 없습니다. `date` 역시 코드가 직접 계산합니다. ([설계 결정](#설계-결정) 참고)
 
 ### 에이전트별 역할·입출력
 
@@ -179,16 +181,22 @@ flowchart TD
 
 프리폼 페이지 트리(레포 페이지 → 날짜별 하위 페이지)가 아니라 **단일 데이터베이스**로 구성합니다.
 
-| 레포명 (속성) | 날짜 (속성) | 회고 내용 |
+| 날짜 (Title) | 레포지토리 (Text) | 페이지 본문 |
 |---|---|---|
-| dev-retro-agent | 2026-07-27 | ... |
-| dev-retro-agent | 2026-07-26 | ... |
+| 2026-07-29 | hochan00/langgraph-agent | 회고 내용 (노션 블록) |
+| 2026-07-28 | hochan00/langgraph-agent | 회고 내용 (노션 블록) |
 
 프리폼 페이지 구조였다면 "오늘 항목이 이미 있는지"를 제목 문자열 비교로 확인해야 했겠지만(Notion
 API가 페이지 제목만 검색 가능하다는 제약 때문), 속성 기반 데이터베이스는
 `databases.query(filter: 레포명==X, 날짜==오늘)`로 **정확하게 필터링**할 수 있습니다. 벡터 인덱스나
 증분 동기화 같은 별도 검색 인프라가 필요 없습니다 — 이 프로젝트가 다루는 데이터가 애초에 구조화된
 성격(레포+날짜)이기 때문입니다.
+
+**마크다운 → 노션 블록 변환**: 노션 API는 `rich_text`에 `**굵게**`, `- 목록` 같은 마크다운 문자를
+그대로 넣으면 **서식으로 해석하지 않고 문자 그대로 표시**합니다. 서식은 블록 타입
+(`heading_1~3`, `bulleted_list_item`)과 `annotations`(`bold` 등)로 별도 명시해야 하므로,
+`_markdown_to_blocks()`에서 LLM이 생성한 마크다운을 노션 블록 구조로 변환한 뒤 `children`에
+전달합니다.
 
 ---
 
@@ -198,12 +206,14 @@ API가 페이지 제목만 검색 가능하다는 제약 때문), 속성 기반 
 |------|------|----------|
 | 언어 | Python 3.13 | — |
 | 프레임워크 | FastAPI | 비동기 지원, 자동 Swagger 문서화 |
-| 오케스트레이션 | LangChain · LangGraph | 멀티 에이전트 그래프 + human-in-the-loop(`interrupt`) |
-| LLM | Google Gemini 2.5 Flash | tool-calling 지원, instruction-following 우수, 무료 티어 제공 |
+| 오케스트레이션 | LangChain · LangGraph | 멀티 에이전트 그래프, `InjectedState`, human-in-the-loop(`interrupt`) |
+| LLM | Google Gemini 3.5 Flash Lite | tool-calling 지원, 무료 티어. `src/core/llm.py`에서 Claude로 교체 가능 |
 | 외부 연동 | GitHub API (`PyGithub`) | 커밋·diff·README 조회, 개인 액세스 토큰(PAT)으로 인증 |
 | 외부 연동 | Notion API (`notion-client`) | 데이터베이스 조회·생성, 무료, rate limit 3 req/s |
+| 프롬프트 관리 | YAML + `ChatPromptTemplate` | 프롬프트 문구를 코드에서 분리. `load_prompt`는 deprecated라 미사용 |
 | 모니터링 | LangSmith | 멀티 에이전트 실행 과정 자동 트레이싱 |
 | 패키지 관리 | uv | 빠른 의존성 해석, `pyproject.toml` + `uv.lock` |
+| 배포 | Docker · GitHub Actions · EC2(t4g/arm64) | main 브랜치 push 시 자동 빌드·배포 |
 
 > **이전 버전(notion-assistant) 대비 의존성 감소**: 개인 노트 검색을 위한 벡터 임베딩
 > (Qwen3-Embedding-0.6B, torch, sentence-transformers)이 더 이상 필요 없습니다. 이 프로젝트가
@@ -214,47 +224,48 @@ API가 페이지 제목만 검색 가능하다는 제약 때문), 속성 기반 
 
 ## 프로젝트 구조
 
+> 아래는 **현재 구현된 파일 기준**입니다. 목표 아키텍처(3-에이전트) 대비 미구현 항목은
+> [구현 현황](#구현-현황)을 참고하세요.
+
 ```
 dev-retro-agent/
 ├── src/
-│   ├── main.py
-│   │
-│   ├── router/
-│   │   ├── agent_router.py       # 회고 생성 트리거 엔드포인트
-│   │   └── github_router.py      # 레포 목록 조회·선택 (일반 API, 에이전트 아님)
-│   │
-│   ├── schemas/
-│   │   ├── agent_schema.py
-│   │   └── github_schema.py
+│   ├── main.py                        # FastAPI 앱, 정적 파일 마운트(캐시 비활성화)
 │   │
 │   ├── core/
-│   │   ├── config.py
-│   │   └── llm.py                # Gemini 인스턴스만 (임베딩 제거)
+│   │   ├── config.py                  # pydantic-settings 기반 환경변수
+│   │   └── llm.py                     # LLM 인스턴스 (Gemini / Claude 전환 지점)
+│   │
+│   ├── router/
+│   │   └── agent_router.py            # POST /api/agent — 회고 생성 트리거
+│   │
+│   ├── schemas/
+│   │   ├── agent_schema.py            # AgentRequest / AgentResponse
+│   │   └── retro_schema.py            # RetroDraft
 │   │
 │   ├── graph/
-│   │   ├── state.py              # RetroState (repo, date, commit_analysis, retro_draft, write_result)
-│   │   ├── nodes/
-│   │   │   ├── commit_analyst.py  # 내부에 agent⇄tools ReAct 서브그래프 포함
-│   │   │   ├── report_writer.py   # fetch_readme만 ReAct, 근거검증은 명시적 엣지
-│   │   │   ├── notion_writer.py
-│   │   │   └── confirm.py        # interrupt 기반 HITL
-│   │   └── graph.py               # 세 서브그래프를 고정 순서로 조립하는 최상위 그래프
+│   │   ├── graph.py                   # 노드·엣지 조립, MemorySaver 체크포인터
+│   │   ├── state.py                   # AgentState (messages, retro_draft, repo, date)
+│   │   └── nodes/
+│   │       ├── agent.py               # ReAct 루프 + 라우팅 + finalize
+│   │       └── notion_write.py        # notion_writer
 │   │
 │   ├── tools/
-│   │   ├── fetch_commits.py
-│   │   ├── fetch_diff.py
-│   │   ├── fetch_readme.py
-│   │   ├── check_existing_entry.py
-│   │   └── create_or_update_entry.py
+│   │   ├── list_repo.py               # list_repos
+│   │   ├── fetch_commits.py           # fetch_commits
+│   │   ├── fetch_diff.py              # fetch_diff (repo는 InjectedState로 주입)
+│   │   └── create_or_update_entry.py  # 노션 페이지 생성 + 마크다운→블록 변환
 │   │
 │   ├── services/
-│   │   ├── github_client.py      # GitHub API 래핑
-│   │   ├── notion_client.py      # Notion API 래핑
-│   │   └── prompts.py
+│   │   └── notion_client.py           # Notion API 클라이언트
 │   │
 │   └── prompts/
+│       └── AGENT_PROMPT.yaml          # 시스템 프롬프트
 │
-└── frontend/                      # 레포 선택 + 회고 생성 버튼 (간단한 SPA)
+├── static/                            # 테스트용 채팅 콘솔 (index.html, script.js, style.css)
+├── Dockerfile
+├── docker-compose.yml
+└── .github/workflows/deploy.yml       # main push → arm64 빌드 → EC2 재기동
 ```
 
 ---
@@ -269,19 +280,61 @@ uv sync
 
 ### 2. 환경변수 설정
 
+프로젝트 루트에 `.env` 파일을 만들고 아래 값을 채웁니다.
+
 ```env
-GOOGLE_API_KEY=your_google_api_key
-GITHUB_TOKEN=your_github_personal_access_token
-NOTION_API_KEY=your_notion_integration_token
-NOTION_RETRO_DB_ID=your_database_id
+# =====langsmith 설정=====
+LANGSMITH_TRACING=true
+LANGSMITH_ENDPOINT=https://api.smith.langchain.com
+LANGSMITH_API_KEY=
+LANGSMITH_PROJECT=
+
+# =====GCP 설정=====
+GOOGLE_API_KEY=
+
+# =====Cluade 설정=====
+ANTHROPIC_API_KEY=
+
+# =====Notion 설정=====
+NOTION_API_KEY=
+NOTION_RETRO_DB_ID=
+
+# =====Git Hub 설정=====
+GITHUB_TOKEN=
 ```
 
-### 3. 서버 실행
+| 변수 | 발급 방법 |
+|---|---|
+| `GOOGLE_API_KEY` | Google AI Studio에서 발급 |
+| `ANTHROPIC_API_KEY` | Claude로 교체해 쓸 때만 필요 |
+| `GITHUB_TOKEN` | GitHub Settings → Developer settings → Personal access tokens (`repo` 권한) |
+| `NOTION_API_KEY` | Notion Integrations에서 Internal Integration 생성 |
+| `NOTION_RETRO_DB_ID` | 데이터베이스 URL의 `/p/` 뒤 32자리. `?v=` 뒤는 **뷰 ID이므로 사용하면 안 됨** |
+
+> **주의 1**: `NOTION_API_KEY`만으로는 접근할 수 없습니다. 노션에서 해당 데이터베이스를 열고
+> `•••` → 연결(Connections) → 생성한 Integration을 **직접 추가**해야 합니다. 이 단계를 빠뜨리면
+> `Could not find database with ID: ...` 오류가 발생합니다.
+>
+> **주의 2**: 배포 환경(EC2)의 `.env`는 로컬과 별개입니다. `.env`는 `.dockerignore`에 있어
+> 이미지에 굽지 않고 `docker-compose`의 `env_file`로 런타임 주입되므로, 새 변수를 추가했다면
+> 서버의 `.env`도 갱신하고 `docker compose up -d --force-recreate`로 컨테이너를 재생성해야 합니다.
+
+### 3. 노션 데이터베이스 준비
+
+다음 속성을 가진 데이터베이스를 만듭니다.
+
+| 속성 이름 | 타입 | 용도 |
+|---|---|---|
+| `날짜` | Title | 회고 날짜 (페이지 제목) |
+| `레포지토리` | Text | 대상 GitHub 레포 (`owner/repo`) |
+
+### 4. 서버 실행
 
 ```bash
 uv run uvicorn src.main:app --reload
 ```
 
+- 채팅 콘솔: `http://localhost:8000`
 - Swagger UI: `http://localhost:8000/docs`
 
 ---
@@ -297,6 +350,11 @@ uv run uvicorn src.main:app --reload
 `report_writer` / `notion_writer` 세 에이전트로 재설계했습니다. 다만 전체 무제한 자율성(에이전트가
 전체 실행 순서까지 매번 판단)은 스코프 규율(완성도 우선)과 충돌하므로, 에이전트 **사이**의 순서는
 고정하고 자율성은 각 에이전트 **내부**로만 한정했습니다.
+
+여기서 구분해야 할 것은 **"도구가 여러 개인 것"과 "에이전트가 여러 개인 것"은 다른 축**이라는
+점입니다. 도구가 2개든 3개든, 그것을 부를지 말지 판단하는 주체가 하나면 그건 여전히 단일
+에이전트입니다. 멀티 에이전트가 성립하려면 (1) 판단 루프가 여러 개이고, (2) 각자 책임 범위가
+다르며, (3) 그 사이에 구조화된 산출물을 넘기는 핸드오프가 있어야 합니다.
 </details>
 
 <details>
@@ -309,18 +367,42 @@ uv run uvicorn src.main:app --reload
 `fetch_readme` 호출도 고정 호출이 아니라 루프 안에서 필요하다고 판단할 때만 호출합니다. 다만 판단
 성격이 다른 "근거검증 재생성"(이미 만든 결과물을 스스로 채점)까지 이 루프에 욱여넣지는 않았습니다 —
 ReAct는 "외부에서 무엇을 더 관찰할지"를 위한 패턴이라, 자기 채점은 기존 CRAG의 명시적 리트라이
-엣지(`grade_hallucination` 패턴)로 남겨뒀습니다. 각 에이전트는 다음 노드에 고정 스키마
-(`CommitAnalysis`, `RetroDraft`)를 넘겨야 하므로, 루프 종료 후 구조화 출력(`with_structured_output`)
-으로 정리하는 단계가 추가로 필요합니다.
+엣지(`grade_hallucination` 패턴)로 남겨뒀습니다.
+
+**실행 중 확인한 한계**: 이 구조는 "몇 번 반복하고 언제 멈출지"를 LLM이 스스로 정하기 때문에
+신뢰성 한계가 뚜렷합니다. 프롬프트에 "무조건 모든 커밋에 대해 `fetch_diff`를 호출하라"고 최대
+강도로 명시했는데도, 10개가 넘는 커밋 중 한 번도 호출하지 않고 커밋 메시지만으로 회고를 지어내는
+경우가 있었습니다. 이는 "안 한 일을 지어내지 않는다"는 이 프로젝트의 핵심 원칙과 정면으로
+충돌하므로, **순회 자체는 코드(`for` 루프)가 보장하고 LLM에는 커밋 하나 단위의 좁은 판단만 맡기는**
+하이브리드 구조로 전환하는 것이 개선 방향입니다. 프롬프트 강도를 높이는 것으로는 해결되지 않는
+문제라는 것을 실험으로 확인했습니다.
 </details>
 
 <details>
-<summary><b>왜 "내일 할 일" 제안을 넣지 않는가</b></summary>
+<summary><b>왜 <code>repo</code>를 LLM이 채우지 않고 <code>InjectedState</code>로 주입하는가</b></summary>
 
-README만으로는 프로젝트의 실제 우선순위, 진행 중인 이슈, 팀 논의 맥락을 알 수 없습니다. 이 상태에서
-"내일 할 일"을 생성하면 근거 없는 추측이 됩니다. 반면 회고(이미 일어난 일의 서술)는 커밋·diff라는
-확실한 근거가 있어 검증이 가능합니다. 그래서 이 프로젝트는 "검증 가능한 것"까지만 책임지도록
-스코프를 좁혔습니다.
+`repo`는 하나의 실행 안에서 절대 바뀌지 않는 고정값입니다. 그런데 초기 구조에서는 매
+`fetch_diff` 호출마다 LLM이 이 값을 처음부터 다시 생성해야 했고, 대화가 길어질수록 오타·환각이
+누적됐습니다. 실제로 `"hochan00/langgraph-agent"`가 `"hochan00/langgraph-asset"`으로 바뀌거나,
+인자 키 이름 자체가 `"repo"`가 아닌 깨진 문자열로 생성되어 GitHub API가 404를 반환했습니다.
+
+`InjectedState`로 선언하면 해당 인자가 **LLM에게 노출되는 도구 스키마에서 아예 제외되고**,
+`ToolNode`가 실행 시점에 그래프 상태에서 값을 주입합니다. LLM이 틀릴 수 있는 지점 자체를
+없애는 것이, 프롬프트로 정확성을 요구하는 것보다 확실합니다. 같은 원칙으로 `date`도 LLM에게 묻지
+않고 코드가 직접 계산합니다.
+</details>
+
+<details>
+<summary><b>왜 프롬프트를 YAML로 분리하고 <code>load_prompt</code>는 쓰지 않는가</b></summary>
+
+프롬프트 문구는 코드보다 훨씬 자주 바뀝니다. 문구만 고친 커밋을 코드 변경과 구분하고 diff
+가독성을 확보하기 위해 `src/prompts/*.yaml`로 분리했습니다.
+
+다만 LangChain의 `load_prompt()`는 `langchain-core 1.2.21`부터 **deprecated**이며 2.0.0에서
+제거 예정입니다. 또한 이 함수는 `_type`/`input_variables`/`template` 형식의 전용 스키마만
+인식해서, 사람이 읽고 고치기 좋은 자유 형식 YAML과 맞지 않습니다(자유 형식 YAML을 넘기면
+`ValidationError`). 그래서 `yaml.safe_load`로 직접 파싱한 뒤
+`ChatPromptTemplate.from_messages`로 구성하는 방식을 택했습니다.
 </details>
 
 <details>
@@ -345,10 +427,45 @@ GitHub·Notion 모두 개인/단일 워크스페이스 전용 인증(Internal In
 
 ---
 
-## 로드맵
+## 구현 현황
 
-- [ ] `commit_analyst` — GitHub API 연동, 커밋/diff 조회, 분석 판단 로직
-- [ ] `report_writer` — 회고 생성 + 근거검증 파이프라인
-- [ ] `notion_writer` — 노션 데이터베이스 연동, `confirm_action` 기반 승인+재수정 루프
-- [ ] 레포 선택 화면 (프론트엔드 + `github_router` API)
-- [ ] 배포 재정비 (임베딩 의존성 제거로 가벼워진 이미지 반영)
+목표는 위 [멀티 에이전트 구조](#멀티-에이전트-구조)이며, 현재는 **단일 `agent` 노드가 커밋 분석과
+회고 작성을 함께 담당하는 중간 단계**입니다. 전체 파이프라인(커밋 조회 → diff 확인 → 회고 작성 →
+노션 저장)이 끝까지 동작하는 것을 먼저 확인한 뒤, 에이전트 분리를 진행하는 순서로 작업 중입니다.
+
+### 지금까지 구현한 것
+
+- **GitHub 연동 도구 3종** — `list_repos`(최근 한 달 커밋 레포 조회), `fetch_commits`(커밋
+  `sha`+`message` 조회), `fetch_diff`(커밋별 파일명·patch 조회)
+- **ReAct 루프** — 세 도구를 `bind_tools`로 바인딩해 커밋별로 diff 확인 여부를 반복 판단
+- **커밋 접두사 기반 판단 프롬프트** — `feat`/`fix`/`refactor`는 diff 확인, `chore`/`docs` 등은
+  메시지만으로 판단하도록 YAML 프롬프트에 규칙 명시
+- **`InjectedState` 기반 `repo` 주입** — LLM이 레포명을 재생성하다 틀리는 문제를 구조적으로 차단
+- **3분기 라우팅** — `continue`(도구 실행) / `end`(회고 생성) / `wait`(인사·되묻기는 저장 없이 종료)
+- **`RetroDraft` 구조화 출력** — 모델별로 다른 `content` 형태(문자열 / 블록 리스트)를
+  `_extract_text()`로 정규화
+- **노션 저장** — 데이터베이스에 페이지 생성, 마크다운(제목·불릿·굵게)을 노션 블록으로 변환
+- **대화 상태 유지** — `MemorySaver` 체크포인터 + `thread_id` 기반 세션
+- **테스트용 채팅 콘솔** — 정적 프론트엔드(마크다운 렌더링, IME 조합 중 Enter 무시 처리)
+- **배포 파이프라인** — Dockerfile, docker-compose, GitHub Actions(arm64 크로스 빌드 → EC2 재기동)
+
+### 앞으로 구현할 것
+
+- **커밋 순회를 코드가 보장하도록 리팩터링** — 현재는 LLM이 `fetch_diff` 호출 횟수를 스스로
+  정해서, 커밋이 많을 때 일부만 확인하거나 아예 건너뛰는 문제가 있음. `for` 루프로 순회를
+  강제하고 LLM에는 커밋 하나 단위의 좁은 판단만 맡기는 하이브리드 구조로 전환
+- **날짜 필터링** — `fetch_commits`가 현재 레포의 전체 커밋을 조회함. `since`/`until`로 특정
+  날짜의 커밋만 가져오도록 수정
+- **`commit_analyst` 분리 + `CommitAnalysis` 구조화 출력** — 커밋 분석을 독립 에이전트로 분리하고
+  `has_activity`(활동 없음 조기 종료 분기), `commit_count`, `summary`, `key_changes`를 산출
+- **`report_writer` 분리 + `fetch_readme`** — 회고 작성을 독립 에이전트로 분리하고, 배경 맥락이
+  필요할 때만 README를 조회하는 루프 추가
+- **근거검증(grounding) 루프** — 생성된 회고가 `key_changes`에 실제로 근거하는지 검증하고,
+  실패 시 최대 2회 재생성하는 명시적 리트라이 엣지 추가
+- **`check_existing_entry`** — `databases.query`로 같은 레포·날짜 항목이 이미 있는지 확인해
+  신규 생성 대신 갱신 처리 (현재는 항상 새 페이지 생성)
+- **`confirm_action` HITL** — `interrupt` 기반 저장 전 승인 절차. 거절 시 수정 요청을 반영해
+  회고를 다시 작성하고 이전 안과의 차이를 보여준 뒤 재승인
+- **버튼 기반 트리거** — 현재는 채팅 메시지로 트리거. 프론트엔드 레포 선택 UI +
+  `github_router`(에이전트가 아닌 일반 API)를 만들어 `repo`/`date`를 명시적 입력으로 전환
+- **`github_client.py` 분리** — 현재 각 도구 파일에 흩어져 있는 PyGithub 호출을 서비스 레이어로 통합
