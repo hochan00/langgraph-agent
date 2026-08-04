@@ -309,7 +309,7 @@ GITHUB_TOKEN=
 | `ANTHROPIC_API_KEY` | Claude로 교체해 쓸 때만 필요 |
 | `GITHUB_TOKEN` | GitHub Settings → Developer settings → Personal access tokens (`repo` 권한) |
 | `NOTION_API_KEY` | Notion Integrations에서 Internal Integration 생성 |
-| `NOTION_RETRO_DB_ID` | 데이터베이스 URL의 `/p/` 뒤 32자리. `?v=` 뒤는 **뷰 ID이므로 사용하면 안 됨** |
+| `NOTION_RETRO_DB_ID` | 데이터베이스 URL 경로 마지막의 32자리 문자열(`?v=` **앞**). `?v=` 뒤 값은 뷰(view) ID이므로 사용하면 안 됨 |
 
 > **주의 1**: `NOTION_API_KEY`만으로는 접근할 수 없습니다. 노션에서 해당 데이터베이스를 열고
 > `•••` → 연결(Connections) → 생성한 Integration을 **직접 추가**해야 합니다. 이 단계를 빠뜨리면
@@ -422,7 +422,12 @@ GitHub·Notion 모두 개인/단일 워크스페이스 전용 인증(Internal In
 방식은 "혼자 쓰는 개인 자동화" 또는 "한 회사가 자기 워크스페이스에서 여러 직원과 함께 쓰는 사내
 도구"에는 완전히 적합하지만, 여러 조직에 판매하는 멀티테넌트 서비스로는 확장할 수 없습니다(각
 조직이 자기 계정으로 로그인해 권한을 위임하는 OAuth가 필요). 이 프로젝트는 의도적으로 전자로
-스코프를 잡았고, 서비스화가 필요해지면 인증 계층만 OAuth로 교체하면 되는 구조입니다.
+스코프를 잡았습니다.
+
+다만 **현재 코드는 "인증 계층만 교체하면 되는 구조"에 아직 도달하지 못했습니다.** 각 도구가
+`settings.GITHUB_TOKEN`처럼 전역 설정을 직접 읽고 있어서, "이번 실행은 다른 사용자의 토큰으로"라고
+지정할 방법이 없습니다. 자격증명을 실행 단위로 주입받는 구조(아래 [구현 현황](#구현-현황) 참고)로
+먼저 바꿔야 이 주장이 실제로 성립합니다.
 </details>
 
 ---
@@ -451,6 +456,12 @@ GitHub·Notion 모두 개인/단일 워크스페이스 전용 인증(Internal In
 
 ### 앞으로 구현할 것
 
+- **자격증명을 실행 단위로 주입받도록 리팩터링** — 현재 각 도구가 전역 설정(`settings.GITHUB_TOKEN`
+  등)을 직접 읽고 있어 실행마다 다른 자격증명을 쓸 수 없음. LangGraph의 Runtime Context
+  (`StateGraph(context_schema=...)` + 도구의 `runtime: ToolRuntime`)로 주입하도록 변경.
+  토큰은 State가 아닌 Context에 두어야 체크포인터에 저장되지 않으며, `InjectedState`와 마찬가지로
+  LLM 도구 스키마에서 제외됨. 이 구조가 갖춰지면 주입 지점만 바꿔 셀프호스팅·요청 단위 토큰·OAuth를
+  모두 지원할 수 있음
 - **커밋 순회를 코드가 보장하도록 리팩터링** — 현재는 LLM이 `fetch_diff` 호출 횟수를 스스로
   정해서, 커밋이 많을 때 일부만 확인하거나 아예 건너뛰는 문제가 있음. `for` 루프로 순회를
   강제하고 LLM에는 커밋 하나 단위의 좁은 판단만 맡기는 하이브리드 구조로 전환
