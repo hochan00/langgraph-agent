@@ -56,10 +56,17 @@ def _markdown_to_blocks(report: str) -> list[dict]:
     return blocks
 
 
+from langgraph.prebuilt import ToolRuntime
+
+from src.graph.context import RetroContext
+
+
 @tool
-def create_or_update_entry(repo: str, date: str, report: str) -> str:
+def create_or_update_entry(
+    repo: str, date: str, report: str, runtime: ToolRuntime[RetroContext]
+) -> str:
     """레포명, 날짜, 회고 내용을 받아 노션 데이터베이스에 새 페이지를 생성한다."""
-    notion = get_notion_client()
+    notion = get_notion_client(runtime.context["notion_api_key"])
     page = notion.pages.create(
         parent={"database_id": settings.NOTION_RETRO_DB_ID},
         properties={

@@ -2,18 +2,20 @@ from typing import Annotated
 
 from github import Github
 from langchain_core.tools import tool
-from langgraph.prebuilt import InjectedState
+from langgraph.prebuilt import InjectedState, ToolRuntime
 
-from src.core.config import settings
+from src.graph.context import RetroContext
 
 
 @tool
 def fetch_diff(
-    repo: Annotated[str, InjectedState("repo")], commit_sha: str
+    repo: Annotated[str, InjectedState("repo")],
+    runtime: ToolRuntime[RetroContext],
+    commit_sha: str,
 ) -> list[str]:
     """커밋 메시지만으로 판단하기 어려운 경우, 해당 커밋의 실제 코드 변경 내용(diff)을 가져온다."""
 
-    gh = Github(settings.GITHUB_TOKEN)
+    gh = Github(runtime.context["github_token"])
     repository = gh.get_repo(repo)
     commit = repository.get_commit(commit_sha)
 

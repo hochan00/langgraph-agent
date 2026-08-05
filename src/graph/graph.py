@@ -2,11 +2,12 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode
 
+from src.graph.context import RetroContext
 from src.graph.nodes.agent import agent, finalize, route_agent_result, tools
 from src.graph.nodes.notion_write import notion_writer
 from src.graph.state import AgentState
 
-graph_builder = StateGraph(AgentState)
+graph_builder = StateGraph(AgentState, context_schema=RetroContext)
 
 graph_builder.add_node("agent", agent)
 graph_builder.add_node("tools", ToolNode(tools))

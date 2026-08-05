@@ -1,5 +1,6 @@
 from fastapi import APIRouter
 
+from src.core.config import settings
 from src.graph.graph import graph
 from src.schemas.agent_schema import (
     AgentRequest,
@@ -26,6 +27,10 @@ def agent_graph(req: AgentRequest):
     result = graph.invoke(
         {"messages": [("user", req.message)]},
         config={"configurable": {"thread_id": req.thread_id}},
+        context={
+            "github_token": settings.GITHUB_TOKEN,
+            "notion_api_key": settings.NOTION_API_KEY,
+        },
     )
 
     return AgentResponse(
