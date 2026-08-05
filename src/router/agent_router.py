@@ -30,6 +30,7 @@ def agent_graph(req: AgentRequest):
         context={
             "github_token": settings.GITHUB_TOKEN,
             "notion_api_key": settings.NOTION_API_KEY,
+            "notion_page_id": settings.NOTION_PARENT_PAGE_ID,
         },
     )
 

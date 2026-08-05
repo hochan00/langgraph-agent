@@ -2,7 +2,6 @@ import re
 
 from langchain_core.tools import tool
 
-from src.core.config import settings
 from src.services.notion_client import get_notion_client
 
 
@@ -65,14 +64,11 @@ from src.graph.context import RetroContext
 def create_or_update_entry(
     repo: str, date: str, report: str, runtime: ToolRuntime[RetroContext]
 ) -> str:
-    """레포명, 날짜, 회고 내용을 받아 노션 데이터베이스에 새 페이지를 생성한다."""
+    """레포명, 날짜, 회고 내용을 받아 노션 페이지를 생성한다."""
     notion = get_notion_client(runtime.context["notion_api_key"])
     page = notion.pages.create(
-        parent={"database_id": settings.NOTION_RETRO_DB_ID},
-        properties={
-            "날짜": {"title": [{"text": {"content": date}}]},
-            "레포지토리": {"rich_text": [{"text": {"content": repo}}]},
-        },
+        parent={"page_id": runtime.context["notion_page_key"]},
+        properties={"title": {"title": [{"text": {"content": f"{date} - {repo}"}}]}},
         children=_markdown_to_blocks(report),  # ← 여기만 바뀜
     )
     return page["url"]
