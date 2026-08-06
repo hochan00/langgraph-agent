@@ -67,7 +67,7 @@ def create_or_update_entry(
     """레포명, 날짜, 회고 내용을 받아 노션 페이지를 생성한다."""
     notion = get_notion_client(runtime.context["notion_api_key"])
     page = notion.pages.create(
-        parent={"page_id": runtime.context["notion_page_key"]},
+        parent={"page_id": runtime.context["notion_page_id"]},
         properties={"title": {"title": [{"text": {"content": f"{date} - {repo}"}}]}},
         children=_markdown_to_blocks(report),  # ← 여기만 바뀜
     )

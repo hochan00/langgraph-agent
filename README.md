@@ -180,7 +180,10 @@ flowchart TD
 
 ## 노션 저장 구조
 
-프리폼 페이지 트리(레포 페이지 → 날짜별 하위 페이지)가 아니라 **단일 데이터베이스**로 구성합니다.
+프리폼 페이지 트리(레포 페이지 → 날짜별 하위 페이지)가 아니라 **데이터베이스**로 구성합니다.
+사용자가 데이터베이스를 직접 만들지 않아도 되도록, **부모 페이지 하나만 만들어 연결해두면 그
+밑에 인라인 데이터베이스를 첫 실행 시 자동 생성**하는 방식을 목표로 합니다 (현재 구현 상태는
+[구현 현황](#구현-현황) 참고).
 
 | 날짜 (Title) | 레포지토리 (Text) | 페이지 본문 |
 |---|---|---|
@@ -195,16 +198,19 @@ API가 페이지 제목만 검색 가능하다는 제약 때문), 속성 기반 
 
 **마크다운 → 노션 블록 변환**: 노션 API는 `rich_text`에 `**굵게**`, `- 목록` 같은 마크다운 문자를
 그대로 넣으면 **서식으로 해석하지 않고 문자 그대로 표시**합니다. 서식은 블록 타입
-(`heading_1~3`, `bulleted_list_item`)과 `annotations`(`bold` 등)로 별도 명시해야 하므로,
-`_markdown_to_blocks()`에서 LLM이 생성한 마크다운을 노션 블록 구조로 변환한 뒤 `children`에
-전달합니다.
+(`heading_1~3`, `bulleted_list_item`)과 `annotations`(`bold` 등)로 별도 명시해야 합니다. 직접
+구현한 `_markdown_to_blocks()`는 제목·리스트·굵게 3종류만 지원하고 2000자 제한도 처리하지 않아,
+`md2notionpage` 라이브러리로 교체할 예정입니다.
 
 ---
 
 ## 서비스 방향성
 
-다른 사용자도 실제로 쓸 수 있는 서비스로 만들기 위한 방향을 다음과 같이 정합니다. (구체적인
-작업 목록은 [구현 현황](#구현-현황) 참고)
+다른 사용자도 실제로 쓸 수 있는 서비스로 만든다면 어떤 방향이어야 하는지 정리한 설계 메모입니다.
+**단, 이 프로젝트는 짧게 배포했다가 내리는 포트폴리오 목적이라 실제 다중 사용자 서비스화(특히
+GitHub OAuth)는 지금 스코프에서 하지 않기로 결정했습니다** — 아래는 "이렇게 확장 가능하게
+설계해뒀다"를 보여주기 위한 방향성이지, 현재 구현 계획은 아닙니다. (구체적인 작업 목록은
+[구현 현황](#구현-현황) 참고)
 
 ### 저장 구조 — 자체 데이터베이스 + 선택적 Notion 내보내기
 
@@ -342,7 +348,7 @@ ANTHROPIC_API_KEY=
 
 # =====Notion 설정=====
 NOTION_API_KEY=
-NOTION_RETRO_DB_ID=
+NOTION_PARENT_PAGE_URL=
 
 # =====Git Hub 설정=====
 GITHUB_TOKEN=
@@ -354,24 +360,22 @@ GITHUB_TOKEN=
 | `ANTHROPIC_API_KEY` | Claude로 교체해 쓸 때만 필요 |
 | `GITHUB_TOKEN` | GitHub Settings → Developer settings → Personal access tokens (`repo` 권한) |
 | `NOTION_API_KEY` | Notion Integrations에서 Internal Integration 생성 |
-| `NOTION_RETRO_DB_ID` | 데이터베이스 URL 경로 마지막의 32자리 문자열(`?v=` **앞**). `?v=` 뒤 값은 뷰(view) ID이므로 사용하면 안 됨 |
+| `NOTION_PARENT_PAGE_URL` | 회고를 저장할 부모 페이지의 노션 URL을 **그대로 복사해서 붙여넣기**.
+  `field_validator`가 URL 끝의 32자리 문자열을 자동으로 추출하므로 ID만 따로 잘라낼 필요 없음 |
 
-> **주의 1**: `NOTION_API_KEY`만으로는 접근할 수 없습니다. 노션에서 해당 데이터베이스를 열고
+> **주의 1**: `NOTION_API_KEY`만으로는 접근할 수 없습니다. 노션에서 부모 페이지를 열고
 > `•••` → 연결(Connections) → 생성한 Integration을 **직접 추가**해야 합니다. 이 단계를 빠뜨리면
-> `Could not find database with ID: ...` 오류가 발생합니다.
+> `Could not find page with ID: ...` 오류가 발생합니다.
 >
 > **주의 2**: 배포 환경(EC2)의 `.env`는 로컬과 별개입니다. `.env`는 `.dockerignore`에 있어
 > 이미지에 굽지 않고 `docker-compose`의 `env_file`로 런타임 주입되므로, 새 변수를 추가했다면
 > 서버의 `.env`도 갱신하고 `docker compose up -d --force-recreate`로 컨테이너를 재생성해야 합니다.
 
-### 3. 노션 데이터베이스 준비
+### 3. 노션 부모 페이지 준비
 
-다음 속성을 가진 데이터베이스를 만듭니다.
-
-| 속성 이름 | 타입 | 용도 |
-|---|---|---|
-| `날짜` | Title | 회고 날짜 (페이지 제목) |
-| `레포지토리` | Text | 대상 GitHub 레포 (`owner/repo`) |
+빈 페이지를 하나 만들고 위 Integration을 연결하기만 하면 됩니다. 속성이 있는 데이터베이스를
+직접 만들 필요는 없습니다 — 그 페이지 밑에 회고용 인라인 데이터베이스가 필요 시점에 자동
+생성됩니다 (구현 상태는 [구현 현황](#구현-현황) 참고).
 
 ### 4. 서버 실행
 
@@ -461,17 +465,26 @@ Notion API의 `search` 엔드포인트는 페이지 제목만 검색합니다(�
 </details>
 
 <details>
-<summary><b>왜 지금은 개인 액세스 토큰(PAT)만 쓰는가</b></summary>
+<summary><b>왜 지금은 개인 액세스 토큰(PAT)만 쓰는가 — Runtime Context는 갖췄지만 OAuth는 안 함</b></summary>
 
-현재 GitHub·Notion 모두 개인/단일 워크스페이스 전용 인증(Internal Integration, PAT)만 사용합니다.
-각 도구가 `settings.GITHUB_TOKEN`처럼 **전역 설정을 직접 읽고 있어서**, "이번 실행은 다른 사용자의
-토큰으로"라고 지정할 방법이 아직 없습니다 — 지금은 사실상 나 혼자만 쓸 수 있는 상태입니다.
+각 도구는 더 이상 `settings.GITHUB_TOKEN`처럼 전역 설정을 직접 읽지 않습니다. `StateGraph(context_schema=RetroContext)` +
+도구의 `runtime: ToolRuntime[RetroContext]`로 **"이번 실행은 어떤 자격증명으로"를 실행 단위로 주입받는
+구조는 이미 갖췄습니다.** 즉 다중 사용자 지원의 전제 조건(요청마다 다른 토큰을 흘려보낼 수 있는
+배관)은 완성된 상태입니다.
 
-이걸 어디까지 확장할지는 [서비스 방향성](#서비스-방향성)에서 별도로 정리했습니다. 결론만 요약하면,
-전체 조직을 대상으로 하는 멀티테넌트 SaaS까지는 가지 않고 **GitHub OAuth 로그인 기반의 다중
-사용자 지원**을 목표로 합니다 — Notion까지 OAuth 앱으로 만드는 건 부가 기능 대비 비용이 커서,
-Notion은 계속 API 키 직접 입력 방식으로 남겨둡니다. 이 전환의 첫 단계가 자격증명을 실행 단위로
-주입받는 구조(아래 [구현 현황](#구현-현황) 참고)입니다.
+다만 그 위에 얹을 **GitHub OAuth 로그인은 만들지 않기로 결정**했습니다. 이유는 다중 사용자
+서비스를 안 만들어서가 아니라, **이 프로젝트가 짧게 배포했다가 내리는 포트폴리오용**이기 때문입니다
+— 그 짧은 구간에 낯선 사용자가 실제로 로그인해 자기 계정으로 쓸 상황 자체가 없어서, OAuth의
+효용(사용자별 토큰 격리)이 성립하지 않습니다. 반면 OAuth(콜백 처리·세션·토큰 저장)는 이
+프로젝트가 보여주려는 핵심(LangGraph ReAct 루프·멀티 에이전트·HITL)과 무관한 별도 영역이라,
+시간을 쓸 가치 대비 비용이 안 맞습니다.
+
+그래서 지금은 `agent_router.py`가 `settings`에서 읽은 **하나의 전역 토큰 값**을 모든 요청의
+Context에 동일하게 채워 넣는 상태입니다 — 배관(Context 주입)은 다중 사용자용으로 만들어졌지만,
+그 배관에 흐르는 값 자체는 여전히 1인분입니다. Notion도 같은 이유로 OAuth 앱화하지 않고 API 키
+직접 입력 방식을 유지합니다. (실제로 여러 사용자가 동시에 쓰는 서비스가 된다면 왜 이 구조로는
+부족한지는 [`md2notionpage`의 `os.environ` 인증 절충](#앞으로-구현할-것) 항목에 정리해뒀습니다 —
+현재는 토큰이 시스템 전체에 하나뿐이라 안전하지만, 진짜 다중 사용자가 되는 순간 경합 조건이 됩니다.)
 </details>
 
 ---
@@ -490,6 +503,10 @@ Notion은 계속 API 키 직접 입력 방식으로 남겨둡니다. 이 전환�
 - **커밋 접두사 기반 판단 프롬프트** — `feat`/`fix`/`refactor`는 diff 확인, `chore`/`docs` 등은
   메시지만으로 판단하도록 YAML 프롬프트에 규칙 명시
 - **`InjectedState` 기반 `repo` 주입** — LLM이 레포명을 재생성하다 틀리는 문제를 구조적으로 차단
+- **자격증명 Runtime Context 주입** — `StateGraph(context_schema=RetroContext)` +
+  도구의 `runtime: ToolRuntime[RetroContext]`로 `github_token`/`notion_api_key`/`notion_page_id`를
+  실행 단위로 주입. State가 아닌 Context라 체크포인터에 저장되지 않고 LLM 도구 스키마에도
+  노출되지 않음 (`InjectedState`와 같은 원칙)
 - **3분기 라우팅** — `continue`(도구 실행) / `end`(회고 생성) / `wait`(인사·되묻기는 저장 없이 종료)
 - **`RetroDraft` 구조화 출력** — 모델별로 다른 `content` 형태(문자열 / 블록 리스트)를
   `_extract_text()`로 정규화
@@ -500,14 +517,21 @@ Notion은 계속 API 키 직접 입력 방식으로 남겨둡니다. 이 전환�
 
 ### 앞으로 구현할 것
 
-- **자격증명을 실행 단위로 주입받도록 리팩터링** — 현재 각 도구가 전역 설정(`settings.GITHUB_TOKEN`
-  등)을 직접 읽고 있어 실행마다 다른 자격증명을 쓸 수 없음. LangGraph의 Runtime Context
-  (`StateGraph(context_schema=...)` + 도구의 `runtime: ToolRuntime`)로 주입하도록 변경.
-  토큰은 State가 아닌 Context에 두어야 체크포인터에 저장되지 않으며, `InjectedState`와 마찬가지로
-  LLM 도구 스키마에서 제외됨. 다중 사용자 지원의 전제조건 (아래 GitHub OAuth 항목 참고)
-- **GitHub OAuth 로그인** — 브라우저에 저장된 `thread_id`는 서버가 검증할 방법이 없어 소유권
-  구분자로 쓰기엔 위조에 취약함. GitHub 로그인으로 전환해 검증된 사용자 ID를 확보하고, 로그인
-  인가 과정에서 GitHub 접근 토큰도 함께 획득 (자세한 이유는 [서비스 방향성](#서비스-방향성) 참고)
+- **GitHub OAuth 로그인 — 보류**: 실행 단위 자격증명 주입 구조는 만들어뒀지만, 이 프로젝트는
+  잠깐 배포했다가 내리는 포트폴리오용이라 실제로 낯선 여러 사용자가 지속적으로 로그인해 쓸 상황이
+  없음. 그래서 OAuth 자체는 지금 스코프에서 제외하고, 이미 갖춰진 Context 주입 구조로 "확장
+  가능하게 설계는 해뒀다"는 상태로 남겨둠 (판단 근거는 [설계 결정](#설계-결정) 참고)
+- **노션 저장 방식 전환 — 부모 페이지 + 인라인 DB 자동 생성**: 지금은 데이터베이스를 미리 만들어
+  ID를 `.env`에 넣어야 하는데, 사용자가 노션에서 속성까지 맞춰 DB를 직접 만들어야 해서 진입장벽이
+  높음. 부모 페이지 하나만 만들어 연결해두면, 그 밑에 인라인 데이터베이스를 첫 실행 시 자동
+  생성하는 방식으로 전환 (`_get_or_create_database`: `blocks.children.list`로 기존 인라인 DB
+  확인 → 없으면 `databases.create(..., is_inline=True)`)
+- **마크다운 → 노션 변환을 `md2notionpage`로 교체**: 직접 구현한 `_markdown_to_blocks`는
+  제목·리스트·굵게 3종류만 지원하고 노션의 블록당 2000자 제한도 처리하지 않음. `md2notionpage`
+  라이브러리로 교체. 다만 이 라이브러리는 `NOTION_SECRET` 환경변수로만 인증해서(함수 인자로 토큰을
+  못 받음) Context 주입 원칙과 어긋남 — 호출 직전 `os.environ["NOTION_SECRET"] = runtime.context["notion_api_key"]`로
+  값 출처는 Context를 유지한 채 라이브러리 요구사항에 맞추는 절충안을 씀. 실제 다중 사용자 환경이
+  되기 전까지(=OAuth 전까지)는 시스템 전체에 토큰이 하나뿐이라 안전함
 - **자체 회고 데이터베이스(SQLite) + 열람 화면** — Notion 없이도 서비스 화면에서 회고 목록/상세를
   바로 볼 수 있도록 자체 저장소를 두고, Notion 저장은 연동되어 있을 때만 자동으로 함께 실행되는
   선택 기능으로 전환. 배포 시 컨테이너 재생성에도 데이터가 남도록 볼륨 마운트 필요
