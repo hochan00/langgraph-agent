@@ -1,0 +1,7 @@
+[project]
+name = "langgraph-agent"
+version = "0.1.0"
+description = "GitHub 커밋과 diff를 근거로 하루 개발 작업을 정리해 Obsidian 데일리 노트로 남기는 LLM 에이전트"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = []
