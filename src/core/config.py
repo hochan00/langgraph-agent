@@ -1,7 +1,9 @@
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
     GOOGLE_API_KEY: str = ""
     LANGSMITH_TRACING: bool = True
     LANGSMITH_API_KEY: str = ""
@@ -17,11 +19,6 @@ class Settings(BaseSettings):
     OBSIDIAN_VAULT_PATH: str = ""
     OBSIDIAN_DAILY_DIR: str = "개발기록"
     OBSIDIAN_NOTE_FORMAT: str = "%y.%m.%d"
-
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        extra = "ignore"
 
 
 settings = Settings()
