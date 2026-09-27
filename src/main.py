@@ -8,9 +8,12 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from starlette.types import Scope
 
+from src.router import devlog_router
+
 logging.basicConfig(level=logging.INFO)
 
 app = FastAPI(title="devlog-agent", version="0.1.0")
+app.include_router(devlog_router.router, prefix="/api")
 
 
 @app.get("/health")
