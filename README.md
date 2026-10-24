@@ -115,6 +115,100 @@ devlog_commits: 5
 | 저장 | Obsidian (로컬 볼트 마크다운) |
 | 프론트엔드 | HTML / CSS / JavaScript |
 
+## 프로젝트 구조
+
+```
+langgraph-agent/
+├── src/
+│   ├── main.py                 # FastAPI 앱, 웹 콘솔 서빙
+│   ├── core/                   # 환경변수 설정, LLM 생성, 날짜 계산
+│   ├── router/                 # API 엔드포인트
+│   ├── services/               # GitHub 커밋 수집
+│   ├── graph/
+│   │   ├── graph.py            # 노드·엣지 조립
+│   │   ├── runner.py           # 요청 단위 실행
+│   │   ├── state.py            # 그래프 상태
+│   │   ├── context.py          # 실행 단위 자격증명
+│   │   └── nodes/              # 수집, 에이전트, 분석 노드
+│   ├── tools/                  # diff 조회 도구
+│   ├── jobs/                   # 일일 정리 실행기 (CLI)
+│   ├── schemas/                # 구조화 출력·API 스키마
+│   └── prompts/                # 시스템 프롬프트 (YAML)
+├── static/                     # 웹 콘솔
+└── tests/
+```
+
+## 시작하기
+
+### 1. 설치
+```bash
+uv sync
+```
+
+### 2. 환경변수
+`.env.example`을 복사해 프로젝트 루트에 `.env` 파일을 만듭니다.
+
+```env
+GOOGLE_API_KEY=
+GITHUB_TOKEN=
+GITHUB_LOGIN=
+TIMEZONE=Asia/Seoul
+OBSIDIAN_VAULT_PATH=/절대경로/내/볼트
+OBSIDIAN_DAILY_DIR=개발기록
+OBSIDIAN_NOTE_FORMAT=%y.%m.%d
+
+# 선택 (LangSmith 추적)
+LANGSMITH_TRACING=true
+LANGSMITH_API_KEY=
+LANGSMITH_PROJECT=langgraph-agent
+```
+
+| 변수 | 설명 |
+|---|---|
+| `GOOGLE_API_KEY` | Google AI Studio에서 발급 |
+| `GITHUB_TOKEN` | GitHub Personal access token (비공개 레포까지 포함하려면 `repo` 권한) |
+| `GITHUB_LOGIN` | 커밋을 검색할 GitHub 사용자 (비우면 토큰 소유자) |
+| `TIMEZONE` | 날짜 경계 기준 시간대 (기본 `Asia/Seoul`) |
+| `OBSIDIAN_VAULT_PATH` | Obsidian 볼트의 절대경로 |
+| `OBSIDIAN_DAILY_DIR` | 볼트 안에서 노트를 저장할 폴더 (기본 `개발기록`) |
+| `OBSIDIAN_NOTE_FORMAT` | 노트 파일명 날짜 형식 (기본 `%y.%m.%d` → `26.10.20.md`) |
+| `LANGSMITH_*` | LangSmith 추적 설정 (사용하지 않으면 `LANGSMITH_TRACING=false`) |
+
+### 3. 실행
+
+CLI (현재는 저장 없이 분석 결과만 출력합니다):
+```bash
+uv run python -m src.jobs.daily_summary --dry-run                     # 어제 작업
+uv run python -m src.jobs.daily_summary --date 2026-10-20 --dry-run   # 특정 날짜
+```
+커밋이 없는 날은 "활동 없음"만 출력합니다.
+
+서버:
+```bash
+uv run uvicorn src.main:app --reload
+```
+| 엔드포인트 | 설명 |
+|---|---|
+| `GET /health` | 헬스체크 |
+| `GET /api/days?days=14` | 최근 N일 중 커밋이 있었던 날짜와 커밋 수 |
+
+### 4. 테스트
+```bash
+uv run pytest
+```
+
 ## 개발 상태
 
-설계를 마쳤고 구현을 시작합니다. 사용 방법은 구현에 맞춰 추가합니다.
+- [x] 하루치 커밋 수집 (모든 레포, 설정 시간대 기준 날짜 경계)
+- [x] 커밋별 diff 확인 판단 (agent ⇄ fetch_diff)
+- [x] 레포별 활동 분석 (구조화 출력)
+- [x] CLI 드라이런
+- [ ] 작업 정리 작성과 근거검증
+- [ ] Obsidian 데일리 노트 저장
+- [ ] 웹 콘솔
+
+## 향후 계획
+
+- 기본 브랜치 외 브랜치의 커밋까지 수집 (GitHub 이벤트 API 보완)
+- 주간·월간 단위 작업 정리
+- PR·이슈 활동 포함
